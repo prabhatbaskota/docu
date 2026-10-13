@@ -51,6 +51,9 @@ Future<void> main(List<String> args) async {
       }
     }
   }
+  if (initialPdfPath != null) {
+    await repo.recordRecentFile(initialPdfPath);
+  }
 
   runApp(ProviderScope(
     overrides: [

@@ -37,12 +37,20 @@ class PageEditor extends StatefulWidget {
   /// "Compress and merge": the Save dialog opens with compression selected.
   final bool compressByDefault;
 
+  /// A merge is saved as a new document in this library folder.
+  final String? outputFolderId;
+  final bool mergeOutput;
+  final bool openAfterSave;
+
   const PageEditor({
     super.key,
     this.original,
     required this.initial,
     this.defaultName,
     this.compressByDefault = false,
+    this.outputFolderId,
+    this.mergeOutput = false,
+    this.openAfterSave = false,
   });
 
   @override
@@ -255,8 +263,9 @@ class _PageEditorState extends State<PageEditor> {
   }) {
     final c = TextEditingController(text: initial);
     var replace = false;
-    CompressQuality? quality =
-        (canCompress && widget.compressByDefault) ? CompressQuality.balanced : null;
+    CompressQuality? quality = (canCompress && widget.compressByDefault)
+        ? CompressQuality.balanced
+        : null;
     return showDialog<({String name, bool replace, CompressQuality? quality})>(
       context: context,
       builder: (ctx) => StatefulBuilder(
@@ -282,7 +291,8 @@ class _PageEditorState extends State<PageEditor> {
                 if (alreadyCompressed)
                   const Padding(
                     padding: EdgeInsets.only(top: 16),
-                    child: Text('These files are already compressed. Saving keeps their current quality.'),
+                    child: Text(
+                        'These files are already compressed. Saving keeps their current quality.'),
                   ),
                 if (canCompress) ...[
                   const SizedBox(height: 16),
@@ -313,7 +323,8 @@ class _PageEditorState extends State<PageEditor> {
                       '${quality!.hint} Pages become images, so text can no longer be selected.',
                       style: Theme.of(ctx).textTheme.bodySmall,
                     ),
-                    const Text('The actual compressed size will be shown after saving.'),
+                    const Text(
+                        'The actual compressed size will be shown after saving.'),
                   ],
                 ],
               ],
@@ -367,7 +378,7 @@ class _PageEditorState extends State<PageEditor> {
     final alreadyCompressed = _pages.isNotEmpty &&
         _pages.every((pg) => compressedPaths.contains(pg.ref.src));
     final r = await _askSave(
-      title: 'Save',
+      title: widget.mergeOutput ? 'Save merged PDF' : 'Save',
       initial: widget.defaultName ?? 'Document ${stamp()}',
       canReplace: orig != null,
       canCompress: !alreadyCompressed,
@@ -390,7 +401,8 @@ class _PageEditorState extends State<PageEditor> {
           (report) => engine.compress(refs, tmp, q, onProgress: report),
         );
         final after = await File(tmp).length();
-        message = '$message · Estimated original: ${fmtSize(before)} · Compressed: ${fmtSize(after)}';
+        message =
+            '$message · Estimated original: ${fmtSize(before)} · Compressed: ${fmtSize(after)}';
       } else {
         await runWithProgress<void>(
           context,
@@ -401,24 +413,34 @@ class _PageEditorState extends State<PageEditor> {
       final String id;
       if (r.replace && orig != null) {
         id = (await repo.replaceFile(orig.id, tmp,
-                compressed: q != null || alreadyCompressed)).id;
+                compressed: q != null || alreadyCompressed))
+            .id;
       } else {
-        id = (await repo.addFile(tmp, title: r.name,
-                compressed: q != null || alreadyCompressed)).id;
+        id = (await repo.addFile(tmp,
+                title: r.name,
+                compressed: q != null || alreadyCompressed,
+                folderId: widget.outputFolderId))
+            .id;
       }
       if (!mounted) return;
       final messenger = ScaffoldMessenger.of(context);
       final nav = Navigator.of(context);
       setState(() => _dirty = false);
-      nav.pop();
-      toastOn(
-        messenger,
-        message,
-        actionLabel: 'Open',
-        duration: const Duration(seconds: 5),
-        onAction: () => nav.push(MaterialPageRoute<void>(
-            builder: (_) => DocumentScreen(id: id))),
-      );
+      if (widget.openAfterSave) {
+        nav.pushReplacement(
+            MaterialPageRoute<void>(builder: (_) => DocumentScreen(id: id)));
+        toastOn(messenger, message);
+      } else {
+        nav.pop();
+        toastOn(
+          messenger,
+          message,
+          actionLabel: 'Open',
+          duration: const Duration(seconds: 5),
+          onAction: () => nav.push(
+              MaterialPageRoute<void>(builder: (_) => DocumentScreen(id: id))),
+        );
+      }
     } catch (e) {
       if (!mounted) return;
       setState(() => _busy = false);
@@ -448,7 +470,8 @@ class _PageEditorState extends State<PageEditor> {
         for (final doc in documents)
           if (doc.compressed) repo.pathOf(doc)
       };
-      await repo.addFile(tmp, title: r.name,
+      await repo.addFile(tmp,
+          title: r.name,
           compressed: refs.isNotEmpty &&
               refs.every((ref) => compressedPaths.contains(ref.src)));
       if (!mounted) return;
@@ -585,7 +608,8 @@ class _PageEditorState extends State<PageEditor> {
     final doc = _docs[pg.ref.src]!;
     final colored = _multiSource;
     return GestureDetector(
-      key: ValueKey<String>('page_${pg.id}'), // String key: the grid package reads keys as String
+      key: ValueKey<String>(
+          'page_${pg.id}'), // String key: the grid package reads keys as String
       onTap: () => _toggle(pg.id),
       child: PageCard(
         doc: doc,
@@ -625,8 +649,7 @@ class _PageEditorState extends State<PageEditor> {
               ? Row(children: [
                   Expanded(
                     child: FilledButton.tonalIcon(
-                      onPressed:
-                          _busy ? null : () => _addPages(replace: false),
+                      onPressed: _busy ? null : () => _addPages(replace: false),
                       icon: const Icon(Icons.add),
                       label: const Text('Add pages'),
                     ),
@@ -645,8 +668,8 @@ class _PageEditorState extends State<PageEditor> {
                       _action(Icons.arrow_back, 'Earlier', () => _nudge(-1)),
                       _action(Icons.arrow_forward, 'Later', () => _nudge(1)),
                     ],
-                    _action(Icons.deselect, 'Clear',
-                        () => setState(_sel.clear)),
+                    _action(
+                        Icons.deselect, 'Clear', () => setState(_sel.clear)),
                   ]),
                 ),
         ),
@@ -658,8 +681,8 @@ class _PageEditorState extends State<PageEditor> {
     if (_loading) return const Center(child: CircularProgressIndicator());
     if (_error != null) {
       return Center(
-          child: Padding(
-              padding: const EdgeInsets.all(24), child: Text(_error!)));
+          child:
+              Padding(padding: const EdgeInsets.all(24), child: Text(_error!)));
     }
     final cols = (MediaQuery.of(context).size.width ~/ 170).clamp(2, 6);
     final selectedSources = {
@@ -669,6 +692,7 @@ class _PageEditorState extends State<PageEditor> {
     final fileSummary = '${selectedSources.length} '
         '${selectedSources.length == 1 ? 'file' : 'files'} '
         '(${selectedSources.map(_letterOf).join(', ')})';
+    final desktop = Platform.isWindows || Platform.isLinux || Platform.isMacOS;
     return Column(
       children: [
         if (_busy) const LinearProgressIndicator(),
@@ -678,7 +702,8 @@ class _PageEditorState extends State<PageEditor> {
             padding: EdgeInsets.fromLTRB(16, 4, 16, 0),
             child: Align(
               alignment: Alignment.centerLeft,
-              child: Text('All pages shown will be merged. Tap a file label to select pages for editing; tap again to deselect.'),
+              child: Text(
+                  'All pages shown will be merged. Tap a file label to select pages for editing; tap again to deselect.'),
             ),
           ),
         Padding(
@@ -687,7 +712,7 @@ class _PageEditorState extends State<PageEditor> {
             alignment: Alignment.centerLeft,
             child: Text(
               _sel.isEmpty
-                  ? '${_pages.length} pages  ·  Tap to select, hold and drag to reorder'
+                  ? '${_pages.length} pages  ·  ${desktop ? 'Click' : 'Tap'} to select, ${desktop ? 'drag' : 'hold and drag'} to reorder'
                   : '${_sel.length} of ${_pages.length} pages selected for editing'
                       '${_multiSource ? ' · $fileSummary' : ''}',
               style: Theme.of(context).textTheme.bodySmall,
@@ -701,6 +726,9 @@ class _PageEditorState extends State<PageEditor> {
                   scrollController: _scroll,
                   itemCount: _pages.length,
                   onReorder: _onReorder,
+                  longPressDelay: desktop
+                      ? Duration.zero
+                      : const Duration(milliseconds: 500),
                   childBuilder: (itemBuilder) => GridView.builder(
                     controller: _scroll,
                     padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
@@ -721,7 +749,11 @@ class _PageEditorState extends State<PageEditor> {
 
   @override
   Widget build(BuildContext context) {
-    final title = widget.original != null ? _baseName : 'New PDF';
+    final title = widget.original != null
+        ? _baseName
+        : widget.mergeOutput
+            ? 'Merge PDFs'
+            : 'New PDF';
     return PopScope(
       canPop: !_dirty,
       onPopInvokedWithResult: (didPop, _) async {
@@ -750,9 +782,8 @@ class _PageEditorState extends State<PageEditor> {
           title: Text(title, overflow: TextOverflow.ellipsis),
           actions: [
             TextButton(
-              onPressed:
-                  (_busy || _loading || _pages.isEmpty) ? null : _save,
-              child: const Text('Save'),
+              onPressed: (_busy || _loading || _pages.isEmpty) ? null : _save,
+              child: Text(widget.mergeOutput ? 'Save merged PDF' : 'Save'),
             ),
           ],
         ),

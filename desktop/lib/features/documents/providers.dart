@@ -34,6 +34,14 @@ final documentsProvider = StreamProvider<List<Document>>((ref) async* {
   }
 });
 
+final recentFilesProvider = StreamProvider<List<RecentPdf>>((ref) async* {
+  final repo = ref.watch(repositoryProvider);
+  yield await repo.recentFiles();
+  await for (final _ in repo.changes) {
+    yield await repo.recentFiles();
+  }
+});
+
 final documentProvider =
     StreamProvider.family<Document?, String>((ref, id) async* {
   final repo = ref.watch(repositoryProvider);

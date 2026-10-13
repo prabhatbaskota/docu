@@ -52,7 +52,9 @@ Future<void> editExternalPdf(BuildContext context, String path) async {
 
 /// Merge = open the editor with all pages of all chosen PDFs.
 Future<void> mergeIntoEditor(BuildContext context, List<String> pdfs,
-    {bool compress = false}) async {
+    {bool compress = false,
+    String? folderId,
+    bool openAfterSave = false}) async {
   try {
     final refs = <PageRef>[];
     for (final path in pdfs) {
@@ -64,6 +66,9 @@ Future<void> mergeIntoEditor(BuildContext context, List<String> pdfs,
         initial: refs,
         defaultName: 'Merged ${stamp()}',
         compressByDefault: compress,
+        mergeOutput: true,
+        outputFolderId: folderId,
+        openAfterSave: openAfterSave,
       ),
     ));
   } catch (e) {

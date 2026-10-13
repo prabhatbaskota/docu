@@ -27,6 +27,7 @@ class DesktopHome extends ConsumerStatefulWidget {
 class _DesktopHomeState extends ConsumerState<DesktopHome> {
   String? _folderId;
   bool _unfiled = false;
+  bool _recent = false;
   String _search = '';
   SortMode _sort = SortMode.recent;
   final Set<String> _selected = {};
@@ -36,6 +37,7 @@ class _DesktopHomeState extends ConsumerState<DesktopHome> {
     super.initState();
     final path = widget.initialPdfPath;
     if (path != null) {
+      _recent = true;
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
         Navigator.of(context).push(MaterialPageRoute<void>(
@@ -54,6 +56,7 @@ class _DesktopHomeState extends ConsumerState<DesktopHome> {
       setState(() {
         _folderId = folder.id;
         _unfiled = false;
+        _recent = false;
       });
     } catch (_) {
       _message('A folder with that name already exists.');
@@ -157,15 +160,18 @@ class _DesktopHomeState extends ConsumerState<DesktopHome> {
   }
 
   Future<void> _mergeSelected(List<Document> documents) async {
-    final ids = _selected.toSet();
-    final chosen = documents.where((doc) => ids.contains(doc.id)).toList();
+    final byId = {for (final doc in documents) doc.id: doc};
+    final chosen = [
+      for (final id in _selected)
+        if (byId.containsKey(id)) byId[id]!,
+    ];
     if (chosen.length < 2) return;
     final compress = await askMergeMode(context);
     if (compress == null || !mounted) return;
     final repo = ref.read(repositoryProvider);
     setState(_selected.clear);
     await mergeIntoEditor(context, [for (final doc in chosen) repo.pathOf(doc)],
-        compress: compress);
+        compress: compress, folderId: _folderId, openAfterSave: true);
   }
 
   Future<void> _deleteSelected() async {
@@ -179,8 +185,18 @@ class _DesktopHomeState extends ConsumerState<DesktopHome> {
     setState(() {
       _folderId = folderId;
       _unfiled = unfiled;
+      _recent = false;
       _selected.clear();
     });
+  }
+
+  Future<void> _openRecent(RecentPdf file) async {
+    if (!mounted) return;
+    await ref.read(repositoryProvider).recordRecentFile(file.path);
+    if (!mounted) return;
+    await Navigator.of(context).push(MaterialPageRoute<void>(
+      builder: (_) => ExternalPdfScreen(path: file.path),
+    ));
   }
 
   List<Document> _visible(List<Document> docs) {
@@ -203,16 +219,19 @@ class _DesktopHomeState extends ConsumerState<DesktopHome> {
   Widget build(BuildContext context) {
     final docsAsync = ref.watch(documentsProvider);
     final foldersAsync = ref.watch(_foldersProvider);
+    final recentAsync = ref.watch(recentFilesProvider);
     final all = docsAsync.value ?? const <Document>[];
     final folders = foldersAsync.value ?? const <DocumentFolder>[];
     final docs = _visible(all);
-    final title = _folderId == null
-        ? (_unfiled ? 'Unfiled' : 'All documents')
-        : folders
-                .where((f) => f.id == _folderId)
-                .map((f) => f.name)
-                .firstOrNull ??
-            'Folder';
+    final title = _recent
+        ? 'Recently opened'
+        : _folderId == null
+            ? (_unfiled ? 'Unfiled' : 'All documents')
+            : folders
+                    .where((f) => f.id == _folderId)
+                    .map((f) => f.name)
+                    .firstOrNull ??
+                'Folder';
 
     return Scaffold(
       body: Row(
@@ -230,9 +249,21 @@ class _DesktopHomeState extends ConsumerState<DesktopHome> {
                         style: TextStyle(
                             fontSize: 28, fontWeight: FontWeight.bold)),
                   ),
-                  _sideItem(Icons.description_outlined, 'All documents',
-                      _folderId == null && !_unfiled, () => _navigate(null)),
-                  _sideItem(Icons.folder_off_outlined, 'Unfiled', _unfiled,
+                  _sideItem(
+                      Icons.description_outlined,
+                      'All documents',
+                      _folderId == null && !_unfiled && !_recent,
+                      () => _navigate(null)),
+                  _sideItem(Icons.history, 'Recently opened', _recent, () {
+                    setState(() {
+                      _recent = true;
+                      _selected.clear();
+                    });
+                  }),
+                  _sideItem(
+                      Icons.folder_off_outlined,
+                      'Unfiled',
+                      _unfiled && !_recent,
                       () => _navigate(null, unfiled: true)),
                   const Divider(),
                   Padding(
@@ -252,7 +283,7 @@ class _DesktopHomeState extends ConsumerState<DesktopHome> {
                       for (final folder in folders)
                         ListTile(
                           dense: true,
-                          selected: _folderId == folder.id,
+                          selected: !_recent && _folderId == folder.id,
                           leading: const Icon(Icons.folder_outlined),
                           title: Text(folder.name,
                               overflow: TextOverflow.ellipsis),
@@ -303,16 +334,17 @@ class _DesktopHomeState extends ConsumerState<DesktopHome> {
                         onChanged: (value) => setState(() => _search = value),
                       ),
                     ),
-                    DropdownButton<SortMode>(
-                      value: _sort,
-                      onChanged: (value) =>
-                          setState(() => _sort = value ?? _sort),
-                      items: [
-                        for (final mode in SortMode.values)
-                          DropdownMenuItem(
-                              value: mode, child: Text('Sort: ${mode.label}'))
-                      ],
-                    ),
+                    if (!_recent)
+                      DropdownButton<SortMode>(
+                        value: _sort,
+                        onChanged: (value) =>
+                            setState(() => _sort = value ?? _sort),
+                        items: [
+                          for (final mode in SortMode.values)
+                            DropdownMenuItem(
+                                value: mode, child: Text('Sort: ${mode.label}'))
+                        ],
+                      ),
                     FilledButton.icon(
                       onPressed: () => importPdfs(context, folderId: _folderId),
                       icon: const Icon(Icons.file_open_outlined),
@@ -325,60 +357,63 @@ class _DesktopHomeState extends ConsumerState<DesktopHome> {
                   ],
                 ),
               ),
-              Padding(
-                padding: const EdgeInsets.fromLTRB(24, 0, 24, 12),
-                child: Wrap(spacing: 8, runSpacing: 8, children: [
-                  OutlinedButton.icon(
-                    onPressed: () async {
-                      final picked = await pickPdf(context);
-                      if (picked == null || !mounted) return;
-                      if (picked.doc != null) {
-                        await editDocument(this.context, picked.doc!);
-                      } else {
-                        await editExternalPdf(this.context, picked.path);
-                      }
-                    },
-                    icon: const Icon(Icons.edit_note),
-                    label: const Text('Edit pages'),
-                  ),
-                  OutlinedButton.icon(
-                    onPressed: () async {
-                      final paths = await pickPdfsForMerge(context);
-                      if (paths == null || !mounted) return;
-                      final compress = await askMergeMode(this.context);
-                      if (compress == null || !mounted) return;
-                      await mergeIntoEditor(this.context, paths,
-                          compress: compress);
-                    },
-                    icon: const Icon(Icons.merge_type),
-                    label: const Text('Merge'),
-                  ),
-                  OutlinedButton.icon(
-                    onPressed: () async {
-                      final picked = await pickPdf(context);
-                      if (picked == null || !mounted) return;
-                      await compressPdfFile(this.context,
-                          path: picked.path,
-                          title: picked.doc?.title ??
-                              p.basenameWithoutExtension(picked.path));
-                    },
-                    icon: const Icon(Icons.compress),
-                    label: const Text('Compress'),
-                  ),
-                  OutlinedButton.icon(
-                    onPressed: () async {
-                      final images = await pickImages();
-                      if (images.isNotEmpty && mounted) {
-                        await imagesIntoEditor(this.context, images,
-                            defaultName: 'Photos ${stamp()}');
-                      }
-                    },
-                    icon: const Icon(Icons.image_outlined),
-                    label: const Text('Images to PDF'),
-                  ),
-                ]),
-              ),
-              if (_selected.isNotEmpty)
+              if (!_recent)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(24, 0, 24, 12),
+                  child: Wrap(spacing: 8, runSpacing: 8, children: [
+                    OutlinedButton.icon(
+                      onPressed: () async {
+                        final picked = await pickPdf(context);
+                        if (picked == null || !mounted) return;
+                        if (picked.doc != null) {
+                          await editDocument(this.context, picked.doc!);
+                        } else {
+                          await editExternalPdf(this.context, picked.path);
+                        }
+                      },
+                      icon: const Icon(Icons.edit_note),
+                      label: const Text('Edit pages'),
+                    ),
+                    OutlinedButton.icon(
+                      onPressed: () async {
+                        final paths = await pickPdfsForMerge(context);
+                        if (paths == null || !mounted) return;
+                        final compress = await askMergeMode(this.context);
+                        if (compress == null || !mounted) return;
+                        await mergeIntoEditor(this.context, paths,
+                            compress: compress,
+                            folderId: _folderId,
+                            openAfterSave: true);
+                      },
+                      icon: const Icon(Icons.merge_type),
+                      label: const Text('Merge'),
+                    ),
+                    OutlinedButton.icon(
+                      onPressed: () async {
+                        final picked = await pickPdf(context);
+                        if (picked == null || !mounted) return;
+                        await compressPdfFile(this.context,
+                            path: picked.path,
+                            title: picked.doc?.title ??
+                                p.basenameWithoutExtension(picked.path));
+                      },
+                      icon: const Icon(Icons.compress),
+                      label: const Text('Compress'),
+                    ),
+                    OutlinedButton.icon(
+                      onPressed: () async {
+                        final images = await pickImages();
+                        if (images.isNotEmpty && mounted) {
+                          await imagesIntoEditor(this.context, images,
+                              defaultName: 'Photos ${stamp()}');
+                        }
+                      },
+                      icon: const Icon(Icons.image_outlined),
+                      label: const Text('Images to PDF'),
+                    ),
+                  ]),
+                ),
+              if (!_recent && _selected.isNotEmpty)
                 Material(
                   color: Theme.of(context).colorScheme.secondaryContainer,
                   child: Padding(
@@ -407,63 +442,110 @@ class _DesktopHomeState extends ConsumerState<DesktopHome> {
                   ),
                 ),
               Expanded(
-                child: docsAsync.isLoading || foldersAsync.isLoading
-                    ? const Center(child: CircularProgressIndicator())
-                    : docsAsync.hasError || foldersAsync.hasError
-                        ? Center(
-                            child: Text(
-                                '${docsAsync.error ?? foldersAsync.error}'))
-                        : docs.isEmpty
+                child: _recent
+                    ? recentAsync.when(
+                        loading: () =>
+                            const Center(child: CircularProgressIndicator()),
+                        error: (error, _) => Center(child: Text('$error')),
+                        data: (files) {
+                          final needle = _search.trim().toLowerCase();
+                          final visible = files
+                              .where((file) =>
+                                  needle.isEmpty ||
+                                  p
+                                      .basename(file.path)
+                                      .toLowerCase()
+                                      .contains(needle))
+                              .toList();
+                          if (visible.isEmpty) {
+                            return Center(
+                                child: Text(needle.isEmpty
+                                    ? 'No recently opened PDFs yet. Open a PDF with docu from File Explorer.'
+                                    : 'No matching PDFs'));
+                          }
+                          return ListView.builder(
+                            itemCount: visible.length,
+                            itemBuilder: (context, index) {
+                              final file = visible[index];
+                              return ListTile(
+                                leading:
+                                    const Icon(Icons.picture_as_pdf_outlined),
+                                title: Text(p.basename(file.path),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis),
+                                subtitle: Text(file.path,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis),
+                                onTap: () => _openRecent(file),
+                                trailing: IconButton(
+                                  tooltip: 'Remove from recently opened',
+                                  icon: const Icon(Icons.close),
+                                  onPressed: () => ref
+                                      .read(repositoryProvider)
+                                      .removeRecentFile(file.path),
+                                ),
+                              );
+                            },
+                          );
+                        },
+                      )
+                    : docsAsync.isLoading || foldersAsync.isLoading
+                        ? const Center(child: CircularProgressIndicator())
+                        : docsAsync.hasError || foldersAsync.hasError
                             ? Center(
-                                child: Text(_search.isNotEmpty
-                                    ? 'No matching PDFs'
-                                    : 'No PDFs here. Import files or move them into this folder.'))
-                            : ListView.builder(
-                                itemCount: docs.length,
-                                itemBuilder: (context, index) {
-                                  final doc = docs[index];
-                                  return ListTile(
-                                    selected: _selected.contains(doc.id),
-                                    leading: Checkbox(
-                                      value: _selected.contains(doc.id),
-                                      onChanged: (_) => setState(() {
-                                        if (!_selected.add(doc.id)) {
-                                          _selected.remove(doc.id);
-                                        }
-                                      }),
-                                    ),
-                                    title: Text(doc.title,
-                                        maxLines: 1,
-                                        overflow: TextOverflow.ellipsis),
-                                    subtitle: Text(
-                                        '${doc.pageCount} pages · ${fmtSize(doc.sizeBytes)}'),
-                                    onTap: () => Navigator.push(
-                                        context,
-                                        MaterialPageRoute<void>(
-                                            builder: (_) =>
-                                                DocumentScreen(id: doc.id))),
-                                    trailing: PopupMenuButton<String>(
-                                      tooltip: 'Document options',
-                                      onSelected: (action) =>
-                                          _docAction(action, doc, folders),
-                                      itemBuilder: (_) => const [
-                                        PopupMenuItem(
-                                            value: 'edit',
-                                            child: Text('Edit pages')),
-                                        PopupMenuItem(
-                                            value: 'move',
-                                            child: Text('Move to folder')),
-                                        PopupMenuItem(
-                                            value: 'rename',
-                                            child: Text('Rename')),
-                                        PopupMenuItem(
-                                            value: 'export',
-                                            child: Text('Export PDF')),
-                                      ],
-                                    ),
-                                  );
-                                },
-                              ),
+                                child: Text(
+                                    '${docsAsync.error ?? foldersAsync.error}'))
+                            : docs.isEmpty
+                                ? Center(
+                                    child: Text(_search.isNotEmpty
+                                        ? 'No matching PDFs'
+                                        : 'No PDFs here. Import files or move them into this folder.'))
+                                : ListView.builder(
+                                    itemCount: docs.length,
+                                    itemBuilder: (context, index) {
+                                      final doc = docs[index];
+                                      return ListTile(
+                                        selected: _selected.contains(doc.id),
+                                        leading: Checkbox(
+                                          value: _selected.contains(doc.id),
+                                          onChanged: (_) => setState(() {
+                                            if (!_selected.add(doc.id)) {
+                                              _selected.remove(doc.id);
+                                            }
+                                          }),
+                                        ),
+                                        title: Text(doc.title,
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis),
+                                        subtitle: Text(
+                                            '${doc.pageCount} pages · ${fmtSize(doc.sizeBytes)}'),
+                                        onTap: () => Navigator.push(
+                                            context,
+                                            MaterialPageRoute<void>(
+                                                builder: (_) => DocumentScreen(
+                                                    id: doc.id))),
+                                        trailing: PopupMenuButton<String>(
+                                          tooltip: 'Document options',
+                                          onSelected: (action) =>
+                                              _docAction(action, doc, folders),
+                                          itemBuilder: (_) => const [
+                                            PopupMenuItem(
+                                                value: 'edit',
+                                                child: Text('Edit pages')),
+                                            PopupMenuItem(
+                                                value: 'move',
+                                                child: Text('Move to folder')),
+                                            PopupMenuItem(
+                                                value: 'rename',
+                                                child: Text('Rename')),
+                                            PopupMenuItem(
+                                                value: 'export',
+                                                child: Text('Export PDF')),
+                                          ],
+                                        ),
+                                      );
+                                    },
+                                  ),
               ),
             ]),
           ),

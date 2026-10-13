@@ -15,6 +15,12 @@ class DocumentFolder {
   final String name;
 }
 
+class RecentPdf {
+  const RecentPdf({required this.path, required this.openedAt});
+  final String path;
+  final DateTime openedAt;
+}
+
 /// All reads/writes of documents: database rows + PDF files on disk.
 /// UI never touches files or SQL directly.
 class DocumentRepository {
@@ -84,6 +90,36 @@ class DocumentRepository {
       for (final row in rows)
         DocumentFolder(id: row['id'] as String, name: row['name'] as String),
     ];
+  }
+
+  Future<List<RecentPdf>> recentFiles() async {
+    final rows = await db.query('recent_files', orderBy: 'opened_at DESC');
+    return [
+      for (final row in rows)
+        RecentPdf(
+          path: row['path'] as String,
+          openedAt:
+              DateTime.fromMicrosecondsSinceEpoch(row['opened_at'] as int),
+        ),
+    ];
+  }
+
+  Future<void> recordRecentFile(String path) async {
+    final absolute = p.normalize(p.absolute(path));
+    if (!await File(absolute).exists()) return;
+    await db.insert(
+        'recent_files',
+        {
+          'path': absolute,
+          'opened_at': DateTime.now().microsecondsSinceEpoch,
+        },
+        conflictAlgorithm: ConflictAlgorithm.replace);
+    _notify();
+  }
+
+  Future<void> removeRecentFile(String path) async {
+    await db.delete('recent_files', where: 'path = ?', whereArgs: [path]);
+    _notify();
   }
 
   Future<DocumentFolder> createFolder(String name) async {

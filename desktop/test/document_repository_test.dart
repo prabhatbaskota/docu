@@ -82,7 +82,8 @@ void main() {
       expect(row['title'], 'Existing');
       expect(row['compressed'], 0);
       expect(row['folder_id'], isNull);
-      expect(await upgraded.getVersion(), 3);
+      expect(await upgraded.getVersion(), 4);
+      expect(await upgraded.query('recent_files'), isEmpty);
     } finally {
       await upgraded.close();
     }
@@ -211,5 +212,21 @@ void main() {
     }
     final r = await repo.list(const DocQuery(), limit: 2);
     expect(r.length, 2);
+  });
+
+  test('recent external PDFs persist, refresh and can be removed', () async {
+    final first = makeSrc('first.pdf');
+    final second = makeSrc('second.pdf');
+    await repo.recordRecentFile(first.path);
+    await repo.recordRecentFile(second.path);
+    await Future<void>.delayed(const Duration(milliseconds: 2));
+    await repo.recordRecentFile(first.path);
+    expect((await repo.recentFiles()).map((f) => f.path),
+        [first.absolute.path, second.absolute.path]);
+    expect(await db.query('recent_files'), hasLength(2));
+    await repo.removeRecentFile(first.absolute.path);
+    expect(
+        (await repo.recentFiles()).map((f) => f.path), [second.absolute.path]);
+    expect(first.existsSync(), isTrue);
   });
 }

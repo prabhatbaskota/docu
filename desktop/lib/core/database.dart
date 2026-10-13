@@ -17,7 +17,7 @@ class AppDatabase {
     } else {
       dbPath = p.join(await getDatabasesPath(), 'docapp.db');
     }
-    return openDatabase(dbPath, version: 3, onCreate: _create,
+    return openDatabase(dbPath, version: 4, onCreate: _create,
         onUpgrade: (db, oldVersion, newVersion) async {
       if (oldVersion < 2) {
         await db.execute(
@@ -32,6 +32,12 @@ class AppDatabase {
         await db.execute('ALTER TABLE documents ADD COLUMN folder_id TEXT');
         await db.execute(
             'CREATE INDEX idx_documents_folder ON documents(folder_id)');
+      }
+      if (oldVersion < 4) {
+        await db.execute('''CREATE TABLE recent_files(
+          path TEXT PRIMARY KEY,
+          opened_at INTEGER NOT NULL
+        )''');
       }
     });
   }
@@ -65,6 +71,10 @@ class AppDatabase {
         key TEXT PRIMARY KEY,
         value TEXT NOT NULL
       )''');
+    await db.execute('''CREATE TABLE recent_files(
+      path TEXT PRIMARY KEY,
+      opened_at INTEGER NOT NULL
+    )''');
   }
 }
 
