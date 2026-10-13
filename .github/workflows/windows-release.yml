@@ -23,6 +23,16 @@ jobs:
           cache: true
       - name: Add Windows platform files
         run: flutter create --platforms=windows --project-name docapp --no-pub .
+      - name: Allow legacy C++ coroutines in Windows plugins
+        shell: pwsh
+        run: |
+          $path = 'windows/CMakeLists.txt'
+          $cmake = Get-Content $path -Raw
+          $pluginInclude = 'include(flutter/generated_plugins.cmake)'
+          if (-not $cmake.Contains($pluginInclude)) { throw 'Flutter plugin include was not found in Windows CMakeLists.txt.' }
+          $compatibilityDefine = 'add_compile_definitions(_SILENCE_EXPERIMENTAL_COROUTINE_DEPRECATION_WARNINGS)'
+          $cmake = $cmake.Replace($pluginInclude, "$compatibilityDefine`n$pluginInclude")
+          Set-Content $path $cmake -NoNewline
       - name: Install dependencies
         run: flutter pub get
       - name: Analyze
