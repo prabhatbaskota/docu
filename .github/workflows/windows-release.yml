@@ -46,15 +46,11 @@ jobs:
         run: |
           $bundle = 'build/windows/x64/runner/Release'
           if (-not (Test-Path "$bundle/docapp.exe")) { throw 'Windows executable was not built.' }
-          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
-          $vs = & $vswhere -latest -products '*' -property installationPath
-          $redist = Get-ChildItem "$vs\VC\Redist\MSVC" -Directory | Sort-Object Name -Descending | Select-Object -First 1
-          if (-not $redist) { throw 'Visual C++ runtime was not found.' }
-          $crt = Get-ChildItem (Join-Path $redist.FullName 'x64') -Directory -Filter 'Microsoft.VC*.CRT' | Select-Object -First 1
-          if (-not $crt) { throw "x64 Visual C++ CRT folder was not found in $($redist.FullName)." }
+          if (-not [Environment]::Is64BitProcess) { throw 'Packaging requires 64-bit PowerShell.' }
+          $crt = Join-Path $env:WINDIR 'System32'
           foreach ($name in @('msvcp140.dll', 'vcruntime140.dll', 'vcruntime140_1.dll')) {
-            $source = Join-Path $crt.FullName $name
-            if (-not (Test-Path $source)) { throw "Required Visual C++ runtime DLL was not found: $source" }
+            $source = Join-Path $crt $name
+            if (-not (Test-Path $source -PathType Leaf)) { throw "Required Visual C++ runtime DLL was not found: $source" }
             Copy-Item $source (Join-Path $bundle $name)
           }
           Compress-Archive -Path "$bundle/*" -DestinationPath 'docu-windows-x64.zip'
