@@ -16,7 +16,7 @@ import 'features/scan_flow.dart';
 import 'features/documents/selection_bar.dart';
 import 'features/desktop/desktop_home.dart';
 
-Future<void> main() async {
+Future<void> main(List<String> args) async {
   WidgetsFlutterBinding.ensureInitialized();
   pdfrxFlutterInitialize();
   if (Platform.isWindows || Platform.isLinux || Platform.isMacOS) {
@@ -42,18 +42,30 @@ Future<void> main() async {
     if (m.name == saved) theme = m;
   }
 
+  String? initialPdfPath;
+  if (Platform.isWindows) {
+    for (final arg in args) {
+      if (arg.toLowerCase().endsWith('.pdf')) {
+        initialPdfPath = arg;
+        break;
+      }
+    }
+  }
+
   runApp(ProviderScope(
     overrides: [
       repositoryProvider.overrideWithValue(repo),
       settingsStoreProvider.overrideWithValue(settings),
       initialThemeProvider.overrideWithValue(theme),
     ],
-    child: const DocApp(),
+    child: DocApp(initialPdfPath: initialPdfPath),
   ));
 }
 
 class DocApp extends ConsumerWidget {
-  const DocApp({super.key});
+  const DocApp({super.key, this.initialPdfPath});
+
+  final String? initialPdfPath;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) => MaterialApp(
@@ -63,7 +75,7 @@ class DocApp extends ConsumerWidget {
         theme: docuTheme(Brightness.light),
         darkTheme: docuTheme(Brightness.dark),
         home: Platform.isWindows || Platform.isLinux || Platform.isMacOS
-            ? const DesktopHome()
+            ? DesktopHome(initialPdfPath: initialPdfPath)
             : const Shell(),
       );
 }

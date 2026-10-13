@@ -151,6 +151,46 @@ void main() {
     }
   });
 
+  testWidgets('Desktop opens a PDF path passed by Windows Explorer',
+      (tester) async {
+    late Database db;
+    late Directory dir;
+    await tester.runAsync(() async {
+      db = await AppDatabase.open(inMemoryDatabasePath);
+      dir = await Directory.systemTemp.createTemp('docapp_open_with_');
+    });
+    final repo = DocumentRepository(
+      db: db,
+      dir: dir,
+      pageCounter: (_) async => 1,
+    );
+
+    try {
+      await tester.pumpWidget(ProviderScope(
+        overrides: [
+          repositoryProvider.overrideWithValue(repo),
+          settingsStoreProvider.overrideWithValue(SettingsStore(db)),
+        ],
+        child: DocApp(initialPdfPath: '${dir.path}/missing.pdf'),
+      ));
+      await tester.runAsync(() async {
+        await repo.list(const DocQuery());
+        await repo.folders();
+      });
+      await tester.pumpAndSettle();
+      expect(find.text('missing.pdf'), findsOneWidget);
+      expect(find.text('PDF file not found'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    } finally {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.runAsync(() async {
+        await repo.dispose();
+        await db.close();
+        await dir.delete(recursive: true);
+      });
+    }
+  });
+
   testWidgets('Top Merge selects library PDFs before choosing merge mode',
       (tester) async {
     late Database db;

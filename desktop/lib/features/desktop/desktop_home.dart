@@ -11,11 +11,14 @@ import '../documents/document_screen.dart';
 import '../documents/providers.dart';
 import '../editor_launch.dart';
 import '../pickers.dart';
+import 'external_pdf_screen.dart';
 
 /// Desktop library. Folders are local library categories; PDFs remain in the
 /// app's document store so renaming a folder cannot break file references.
 class DesktopHome extends ConsumerStatefulWidget {
-  const DesktopHome({super.key});
+  const DesktopHome({super.key, this.initialPdfPath});
+
+  final String? initialPdfPath;
 
   @override
   ConsumerState<DesktopHome> createState() => _DesktopHomeState();
@@ -27,6 +30,20 @@ class _DesktopHomeState extends ConsumerState<DesktopHome> {
   String _search = '';
   SortMode _sort = SortMode.recent;
   final Set<String> _selected = {};
+
+  @override
+  void initState() {
+    super.initState();
+    final path = widget.initialPdfPath;
+    if (path != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        Navigator.of(context).push(MaterialPageRoute<void>(
+          builder: (_) => ExternalPdfScreen(path: path),
+        ));
+      });
+    }
+  }
 
   Future<void> _newFolder() async {
     final name =
