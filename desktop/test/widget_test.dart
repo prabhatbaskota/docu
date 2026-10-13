@@ -15,7 +15,8 @@ void main() {
   sqfliteFfiInit();
   databaseFactory = databaseFactoryFfi;
 
-  testWidgets('Already compressed document skips compression and quality picker',
+  testWidgets(
+      'Already compressed document skips compression and quality picker',
       (tester) async {
     late Database db;
     late Directory dir;
@@ -27,7 +28,8 @@ void main() {
       repo = DocumentRepository(db: db, dir: dir, pageCounter: (_) async => 1);
       final source = File('${dir.path}/source.pdf');
       await source.writeAsBytes([1, 2, 3]);
-      doc = await repo.addFile(source.path, title: 'Already small', compressed: true);
+      doc = await repo.addFile(source.path,
+          title: 'Already small', compressed: true);
     });
     try {
       await tester.pumpWidget(ProviderScope(
@@ -44,7 +46,9 @@ void main() {
         await repo.list(const DocQuery());
       });
       await tester.pumpAndSettle();
-      expect(find.text('This file is already compressed. No new copy was created.'),
+      expect(
+          find.text(
+              'This file is already compressed. No new copy was created.'),
           findsOneWidget);
       expect(find.text('Balanced'), findsNothing);
       await tester.runAsync(() async {
@@ -61,7 +65,7 @@ void main() {
     }
   });
 
-  testWidgets('Document app opens Home and switches to Favorites',
+  testWidgets('Mobile shell opens Home and switches to Favorites',
       (tester) async {
     late Database db;
     late Directory dir;
@@ -81,7 +85,7 @@ void main() {
           repositoryProvider.overrideWithValue(repo),
           settingsStoreProvider.overrideWithValue(SettingsStore(db)),
         ],
-        child: const DocApp(),
+        child: const MaterialApp(home: Shell()),
       ));
       await tester.runAsync(() async {
         await repo.list(const DocQuery());
@@ -96,6 +100,46 @@ void main() {
       await tester.tap(find.text('Favorites'));
       await tester.pumpAndSettle();
       expect(find.text('No favorites yet'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    } finally {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.runAsync(() async {
+        await repo.dispose();
+        await db.close();
+        await dir.delete(recursive: true);
+      });
+    }
+  });
+
+  testWidgets('Desktop library renders folder navigation', (tester) async {
+    late Database db;
+    late Directory dir;
+    await tester.runAsync(() async {
+      db = await AppDatabase.open(inMemoryDatabasePath);
+      dir = await Directory.systemTemp.createTemp('docapp_desktop_');
+    });
+    final repo = DocumentRepository(
+      db: db,
+      dir: dir,
+      pageCounter: (_) async => 1,
+    );
+
+    try {
+      await tester.pumpWidget(ProviderScope(
+        overrides: [
+          repositoryProvider.overrideWithValue(repo),
+          settingsStoreProvider.overrideWithValue(SettingsStore(db)),
+        ],
+        child: const DocApp(),
+      ));
+      await tester.runAsync(() async {
+        await repo.list(const DocQuery());
+        await repo.folders();
+      });
+      await tester.pumpAndSettle();
+      expect(find.text('All documents'), findsWidgets);
+      expect(find.text('Unfiled'), findsOneWidget);
+      expect(find.byTooltip('New folder'), findsOneWidget);
       expect(tester.takeException(), isNull);
     } finally {
       await tester.pumpWidget(const SizedBox.shrink());
@@ -132,7 +176,7 @@ void main() {
           documentsProvider.overrideWith((ref) => Stream.value(<Document>[])),
           favoritesProvider.overrideWith((ref) => Stream.value(<Document>[])),
         ],
-        child: const DocApp(),
+        child: const MaterialApp(home: Shell()),
       ));
       await tester.pumpAndSettle();
       await tester.tap(find.text('Merge'));

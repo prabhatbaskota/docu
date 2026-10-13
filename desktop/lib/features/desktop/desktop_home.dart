@@ -202,7 +202,7 @@ class _DesktopHomeState extends ConsumerState<DesktopHome> {
         children: [
           SizedBox(
             width: 250,
-            child: ColoredBox(
+            child: Material(
               color: Theme.of(context).colorScheme.surfaceContainerLow,
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,

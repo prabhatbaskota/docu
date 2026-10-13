@@ -56,13 +56,13 @@ class SettingsPage extends ConsumerWidget {
           const ListTile(
             leading: Icon(Icons.lock_outline),
             title: Text('Private by default'),
-            subtitle: Text(
-                'Documents stay on this device unless you share them.'),
+            subtitle:
+                Text('Documents stay on this device unless you share them.'),
           ),
           const ListTile(
             leading: Icon(Icons.info_outline),
             title: Text('Version'),
-            subtitle: Text('0.3.0'),
+            subtitle: Text('0.1.1'),
           ),
         ],
       ),
