@@ -1,0 +1,58 @@
+name: Windows release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: desktop
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: '3.47.2'
+          cache: true
+      - name: Add Windows platform files
+        run: flutter create --platforms=windows --project-name docapp --no-pub .
+      - name: Install dependencies
+        run: flutter pub get
+      - name: Analyze
+        run: flutter analyze
+      - name: Test
+        run: flutter test
+      - name: Build Windows app
+        run: flutter build windows --release
+      - name: Package app
+        shell: pwsh
+        run: |
+          $bundle = 'build/windows/x64/runner/Release'
+          if (-not (Test-Path "$bundle/docapp.exe")) { throw 'Windows executable was not built.' }
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vs = & $vswhere -latest -products '*' -property installationPath
+          $redist = Get-ChildItem "$vs\VC\Redist\MSVC" -Directory | Sort-Object Name -Descending | Select-Object -First 1
+          if (-not $redist) { throw 'Visual C++ runtime was not found.' }
+          $crt = Join-Path $redist.FullName 'x64\Microsoft.VC143.CRT'
+          foreach ($name in @('msvcp140.dll', 'vcruntime140.dll', 'vcruntime140_1.dll')) {
+            Copy-Item (Join-Path $crt $name) (Join-Path $bundle $name)
+          }
+          Compress-Archive -Path "$bundle/*" -DestinationPath 'docu-windows-x64.zip'
+      - name: Build installer
+        shell: pwsh
+        run: |
+          choco install innosetup --no-progress -y
+          & 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe' "/DMyAppVersion=${{ github.ref_name }}" 'packaging\windows\docu.iss'
+      - name: Publish release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create '${{ github.ref_name }}' 'docu-windows-x64.zip' 'release\docu-windows-x64-setup.exe' --title 'docu ${{ github.ref_name }}' --generate-notes
