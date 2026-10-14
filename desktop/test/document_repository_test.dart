@@ -4,6 +4,7 @@ import 'package:docapp/core/database.dart';
 import 'package:docapp/features/documents/document.dart';
 import 'package:docapp/features/documents/document_repository.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:path/path.dart' as p;
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 void main() {
@@ -221,12 +222,14 @@ void main() {
     await repo.recordRecentFile(second.path);
     await Future<void>.delayed(const Duration(milliseconds: 2));
     await repo.recordRecentFile(first.path);
-    expect((await repo.recentFiles()).map((f) => f.path),
-        [first.absolute.path, second.absolute.path]);
+    expect((await repo.recentFiles()).map((f) => f.path), [
+      p.normalize(p.absolute(first.path)),
+      p.normalize(p.absolute(second.path)),
+    ]);
     expect(await db.query('recent_files'), hasLength(2));
-    await repo.removeRecentFile(first.absolute.path);
-    expect(
-        (await repo.recentFiles()).map((f) => f.path), [second.absolute.path]);
+    await repo.removeRecentFile(first.path);
+    expect((await repo.recentFiles()).map((f) => f.path),
+        [p.normalize(p.absolute(second.path))]);
     expect(first.existsSync(), isTrue);
   });
 }

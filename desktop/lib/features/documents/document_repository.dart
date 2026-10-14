@@ -93,7 +93,8 @@ class DocumentRepository {
   }
 
   Future<List<RecentPdf>> recentFiles() async {
-    final rows = await db.query('recent_files', orderBy: 'opened_at DESC');
+    final rows =
+        await db.query('recent_files', orderBy: 'opened_at DESC, path ASC');
     return [
       for (final row in rows)
         RecentPdf(
@@ -104,8 +105,10 @@ class DocumentRepository {
     ];
   }
 
+  String _recentPath(String path) => p.normalize(p.absolute(path));
+
   Future<void> recordRecentFile(String path) async {
-    final absolute = p.normalize(p.absolute(path));
+    final absolute = _recentPath(path);
     if (!await File(absolute).exists()) return;
     await db.insert(
         'recent_files',
@@ -118,7 +121,8 @@ class DocumentRepository {
   }
 
   Future<void> removeRecentFile(String path) async {
-    await db.delete('recent_files', where: 'path = ?', whereArgs: [path]);
+    await db.delete('recent_files',
+        where: 'path = ?', whereArgs: [_recentPath(path)]);
     _notify();
   }
 
