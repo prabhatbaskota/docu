@@ -15,16 +15,19 @@ For a Windows build, install Flutter and Visual Studio with the Desktop
 development with C++ workload, then run:
 
 ```powershell
-flutter create --platforms=windows --project-name docapp .
-flutter pub get
+flutter clean
+flutter create --platforms=windows --project-name docapp --no-pub .
+flutter pub get --enforce-lockfile
 flutter test
-flutter build windows --release
+flutter build windows --release --no-pub
 ```
 
 The app bundle is at `build/windows/x64/runner/Release`. Distribute the full
-folder, not just `docapp.exe`. The GitHub Actions workflow builds and attaches
-both a ZIP and `docu-windows-x64-setup.exe` to a GitHub Release when a `v*` tag
-is pushed. Users download the installer on their Windows PC. A mobile app can
+folder, not just `docapp.exe`. The GitHub Actions workflow builds a release
+candidate when run manually or when a `v*` tag is pushed. Follow the
+[Windows release audit](../WINDOWS_RELEASE_AUDIT.md) before publishing its ZIP
+and installer to GitHub Releases. Users download the installer on their Windows
+PC. A mobile app can
 provide a link to the release, but opening that link on a phone cannot install
 the app on a PC.
 

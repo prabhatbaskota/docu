@@ -18,3 +18,4 @@ once the first release is published. The installer must be downloaded and run
 on the Windows PC. A link opened on a phone cannot install it on a separate PC.
 
 To build from source, use the commands in [desktop/README.md](desktop/README.md).
+For release checks and candidate verification, see [WINDOWS_RELEASE_AUDIT.md](WINDOWS_RELEASE_AUDIT.md).
