@@ -52,7 +52,7 @@ jobs:
       - name: Install pinned Inno Setup
         shell: pwsh
         run: |
-          choco install innosetup --version=6.5.4 --no-progress -y
+          choco install innosetup --version=6.5.4 --allow-downgrade --no-progress -y
           if ($LASTEXITCODE -ne 0) { throw 'Inno Setup install failed' }
       - name: Package and hash release candidate
         shell: pwsh
