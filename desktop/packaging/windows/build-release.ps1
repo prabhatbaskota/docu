@@ -44,14 +44,12 @@ try {
 New-Item -ItemType Directory -Path $release -Force | Out-Null
 if (Get-ChildItem -LiteralPath $release -Force) { throw 'Release directory must be empty.' }
 
-$vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
-$vs = & $vswhere -latest -products '*' -property installationPath
-if ($LASTEXITCODE -ne 0 -or -not $vs) { throw 'Visual Studio installation not found.' }
-$crt = Get-ChildItem (Join-Path $vs 'VC\Redist\MSVC') -Directory |
-  Sort-Object Name -Descending | Select-Object -First 1
-if (-not $crt) { throw 'VC runtime not found.' }
+if (-not [Environment]::Is64BitProcess) { throw 'Packaging requires 64-bit PowerShell.' }
+$crt = Join-Path $env:WINDIR 'System32'
 foreach ($name in @('msvcp140.dll', 'vcruntime140.dll', 'vcruntime140_1.dll')) {
-  Copy-Item -LiteralPath (Join-Path $crt.FullName "x64\Microsoft.VC143.CRT\$name") -Destination (Join-Path $bundle $name)
+  $source = Join-Path $crt $name
+  if (-not (Test-Path -LiteralPath $source -PathType Leaf)) { throw "Required VC runtime DLL missing: $source" }
+  Copy-Item -LiteralPath $source -Destination (Join-Path $bundle $name)
 }
 
 $pfx = $null
