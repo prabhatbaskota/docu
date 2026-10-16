@@ -16,8 +16,18 @@ void main() {
   late Directory srcDir;
   late DocumentRepository repo;
 
-  File makeSrc(String name, {int bytes = 10}) =>
-      File('${srcDir.path}/$name')..writeAsBytesSync(List.filled(bytes, 1));
+  File makeSrc(String name, {int bytes = 10}) => File('${srcDir.path}/$name')
+    ..writeAsBytesSync([
+      0x25,
+      0x50,
+      0x44,
+      0x46,
+      0x2d,
+      0x31,
+      0x2e,
+      0x37,
+      ...List.filled(bytes - 8, 1),
+    ]);
 
   setUp(() async {
     db = await AppDatabase.open(inMemoryDatabasePath);
@@ -50,6 +60,44 @@ void main() {
     expect(src.existsSync(), isTrue);
     final all = await repo.list(const DocQuery());
     expect(all.single.title, 'x'); // ".pdf" stripped
+  });
+
+  test('rejects a renamed non-PDF without adding it to the library', () async {
+    final src = File('${srcDir.path}/bad.pdf')..writeAsStringSync('not a PDF');
+    await expectLater(
+      repo.addFile(src.path, title: 'Bad', move: false),
+      throwsFormatException,
+    );
+    expect(await repo.list(const DocQuery()), isEmpty);
+    expect(src.existsSync(), isTrue);
+  });
+
+  test('invalid replacement preserves the original PDF', () async {
+    final doc = await repo.addFile(makeSrc('original.pdf').path, title: 'Good');
+    final before = File(repo.pathOf(doc)).readAsBytesSync();
+    final bad = File('${srcDir.path}/bad.pdf')..writeAsStringSync('not a PDF');
+    await expectLater(
+        repo.replaceFile(doc.id, bad.path), throwsFormatException);
+    expect(File(repo.pathOf(doc)).readAsBytesSync(), before);
+    expect((await repo.get(doc.id))!.pageCount, doc.pageCount);
+  });
+
+  test('rejects a PDF that the parser cannot open', () async {
+    final rejecting = DocumentRepository(
+      db: db,
+      dir: libDir,
+      pageCounter: (_) async => throw const FormatException('broken'),
+    );
+    try {
+      final src = makeSrc('broken.pdf');
+      await expectLater(
+        rejecting.addFile(src.path, title: 'Broken', move: false),
+        throwsFormatException,
+      );
+      expect(await repo.list(const DocQuery()), isEmpty);
+    } finally {
+      await rejecting.dispose();
+    }
   });
 
   test(
@@ -189,7 +237,8 @@ void main() {
   });
 
   test('syncFromDisk adopts untracked PDFs exactly once', () async {
-    File('${libDir.path}/Old scan.pdf').writeAsBytesSync([1, 2, 3]);
+    File('${libDir.path}/Old scan.pdf')
+        .writeAsBytesSync([0x25, 0x50, 0x44, 0x46, 0x2d, 0x31, 0x2e, 0x37]);
     File('${libDir.path}/notes.txt').writeAsStringSync('ignore me');
     expect(await repo.syncFromDisk(), 1);
     final all = await repo.list(const DocQuery());

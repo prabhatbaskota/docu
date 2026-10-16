@@ -27,7 +27,7 @@ void main() {
       dir = await Directory.systemTemp.createTemp('docapp_compress_');
       repo = DocumentRepository(db: db, dir: dir, pageCounter: (_) async => 1);
       final source = File('${dir.path}/source.pdf');
-      await source.writeAsBytes([1, 2, 3]);
+      await source.writeAsBytes([37, 80, 68, 70, 45, 49, 46, 55]);
       doc = await repo.addFile(source.path,
           title: 'Already small', compressed: true);
     });
@@ -202,7 +202,7 @@ void main() {
       repo = DocumentRepository(db: db, dir: dir, pageCounter: (_) async => 1);
       for (final title in ['Invoice', 'Receipt']) {
         final source = File('${dir.path}/$title.pdf');
-        await source.writeAsBytes([1, 2, 3]);
+        await source.writeAsBytes([37, 80, 68, 70, 45, 49, 46, 55]);
         await repo.addFile(source.path, title: title);
       }
     });

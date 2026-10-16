@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:path/path.dart' as p;
 
@@ -156,6 +157,9 @@ class _DesktopHomeState extends ConsumerState<DesktopHome> {
       case 'edit':
         if (mounted) await editDocument(context, doc);
         return;
+      case 'compress':
+        if (mounted) await compressDocument(context, doc);
+        return;
     }
   }
 
@@ -233,7 +237,17 @@ class _DesktopHomeState extends ConsumerState<DesktopHome> {
                     .firstOrNull ??
                 'Folder';
 
-    return Scaffold(
+    return CallbackShortcuts(
+      bindings: {
+        const SingleActivator(LogicalKeyboardKey.keyO, control: true):
+            () => importPdfs(context, folderId: _folderId),
+        const SingleActivator(LogicalKeyboardKey.keyN, control: true):
+            _newFolder,
+        const SingleActivator(LogicalKeyboardKey.escape): () {
+          if (_selected.isNotEmpty) setState(_selected.clear);
+        },
+      },
+      child: Focus(autofocus: true, child: Scaffold(
       body: Row(
         children: [
           SizedBox(
@@ -431,6 +445,15 @@ class _DesktopHomeState extends ConsumerState<DesktopHome> {
                             onPressed: () => _mergeSelected(all),
                             icon: const Icon(Icons.merge_type),
                             label: const Text('Merge')),
+                      if (_selected.length == 1)
+                        TextButton.icon(
+                            onPressed: () {
+                              final selected = all.firstWhere(
+                                  (doc) => doc.id == _selected.single);
+                              compressDocument(context, selected);
+                            },
+                            icon: const Icon(Icons.compress),
+                            label: const Text('Compress')),
                       TextButton.icon(
                           onPressed: _deleteSelected,
                           icon: const Icon(Icons.delete_outline),
@@ -532,6 +555,9 @@ class _DesktopHomeState extends ConsumerState<DesktopHome> {
                                             PopupMenuItem(
                                                 value: 'edit',
                                                 child: Text('Edit pages')),
+                                        PopupMenuItem(
+                                            value: 'compress',
+                                            child: Text('Compress')),
                                             PopupMenuItem(
                                                 value: 'move',
                                                 child: Text('Move to folder')),
@@ -551,7 +577,7 @@ class _DesktopHomeState extends ConsumerState<DesktopHome> {
           ),
         ],
       ),
-    );
+    )));
   }
 
   Widget _sideItem(

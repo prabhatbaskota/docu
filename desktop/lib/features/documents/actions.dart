@@ -92,6 +92,7 @@ Future<void> importPdfs(BuildContext context, {String? folderId}) async {
   );
   if (r == null) return;
   var ok = 0;
+  var failed = 0;
   for (final path in r.paths.whereType<String>()) {
     try {
       await repo.addFile(path,
@@ -99,13 +100,15 @@ Future<void> importPdfs(BuildContext context, {String? folderId}) async {
           move: false,
           folderId: folderId);
       ok++;
-    } catch (_) {}
+    } catch (_) {
+      failed++;
+    }
   }
   toastOn(
     messenger,
-    ok == 0
-        ? 'Could not import the file'
-        : 'Imported $ok document${ok == 1 ? '' : 's'}',
+    failed == 0
+        ? 'Imported $ok document${ok == 1 ? '' : 's'}'
+        : 'Imported $ok; $failed file${failed == 1 ? '' : 's'} could not be opened as PDF',
   );
 }
 
