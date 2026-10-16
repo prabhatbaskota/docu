@@ -1,30 +1,32 @@
-# PDF Worker and docu Desktop
+# docu
 
-This repository contains three separate applications: the original Streamlit
-PDF Worker (`app.py`), the released Windows Flutter app in [`desktop/`](desktop/),
-and the Android/iOS Flutter app in [`mobile/`](mobile/). Each Flutter app has its
-own dependencies and build instructions. The Streamlit app remains separate.
+This repository contains three applications:
 
-## Windows desktop app
+| Directory | Application | Build or run instructions |
+| --- | --- | --- |
+| [`mobile/`](mobile/) | Flutter scanner and PDF toolkit for Android and iOS | [Mobile README](mobile/README.md) |
+| [`desktop/`](desktop/) | Flutter Windows PDF library and editor | [Desktop README](desktop/README.md) |
+| [`streamlit/`](streamlit/) | Original Streamlit PDF Worker | [Streamlit README](streamlit/README.md) |
 
-docu Desktop stores PDFs on the PC. It can read PDFs, create and rename library
-folders, move multiple PDFs between folders, search, sort, edit pages, merge,
-compress, convert images to PDF, and export PDFs. Deleting a folder moves its
-documents to Unfiled. Library folders are categories in the app; the PDF files
-remain in its local document store. No account or cloud service is required.
+The apps have separate dependencies and entry points. Run Flutter commands from
+`mobile/` or `desktop/`, and Streamlit commands from `streamlit/`.
 
-Download the latest Windows installer from
-[GitHub Releases](https://github.com/prabhatbaskota/pdf-merger/releases/latest).
-The installer must be downloaded and run
-on the Windows PC. A link opened on a phone cannot install it on a separate PC.
+## Releases
 
-To build from source, use the commands in [desktop/README.md](desktop/README.md).
-For release checks and candidate verification, see [WINDOWS_RELEASE_AUDIT.md](WINDOWS_RELEASE_AUDIT.md).
+The [Windows installer](https://github.com/prabhatbaskota/pdf-merger/releases/latest)
+was released from the earlier desktop repository. The repository-root
+[Windows workflow](.github/workflows/windows-release.yml) builds `desktop/`.
 
-## Mobile app
+The newest local Android preview APK is in `release/`. It is signed with the
+project's debug key and uses the placeholder package ID, so it is for direct
+testing only. APKs and other build output are excluded from Git. See
+[mobile/PLAY_RELEASE.md](mobile/PLAY_RELEASE.md) for the signed Android release
+and Google Play handoff.
 
-The mobile app opens on Scan and has Home, Tools, and Favorites navigation.
-It scans pages, imports PDFs, edits and merges pages, compresses copies, and
-creates PDFs from images. Build instructions and known limitations are in
-[mobile/README.md](mobile/README.md). Mobile builds and APKs are separate from
-the Windows installer and are not committed to Git.
+The previous Git repository metadata was backed up locally in
+`.git-backup-pdf_merger-20261016/` before moving `.git` to this directory. The
+backup is excluded from Git.
+
+The one-time [local cleanup script](scripts/cleanup-local.ps1) checks the
+duplicate pre-migration mobile source before removing it and older build
+artifacts. Review its targets or run it with `-WhatIf` before applying it.

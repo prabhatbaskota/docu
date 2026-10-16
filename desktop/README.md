@@ -25,7 +25,7 @@ flutter build windows --release --no-pub
 The app bundle is at `build/windows/x64/runner/Release`. Distribute the full
 folder, not just `docapp.exe`. The repository's GitHub Actions workflow
 builds a release candidate when a `v*` tag is pushed. Follow the
-[Windows release audit](../WINDOWS_RELEASE_AUDIT.md) and
+[Windows release audit](WINDOWS_RELEASE_AUDIT.md) and
 [product audit](DOCU_PRODUCT_AUDIT.md) before publishing its ZIP
 and installer to GitHub Releases. Users download the installer on their Windows
 PC. A mobile app can

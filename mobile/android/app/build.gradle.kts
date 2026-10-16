@@ -11,14 +11,25 @@ val releaseKeysFile = rootProject.file("key.properties")
 if (releaseKeysFile.isFile) {
     releaseKeysFile.inputStream().use { releaseKeys.load(it) }
 }
-val docuApplicationId = providers.gradleProperty("docuApplicationId")
+val docuApplicationId = providers.environmentVariable("DOCU_APPLICATION_ID")
+    .orElse(providers.gradleProperty("docuApplicationId"))
     .orElse("com.yourname.docapp").get()
+val signingStoreFile = providers.environmentVariable("DOCU_KEYSTORE_PATH").orNull
+    ?: releaseKeys.getProperty("storeFile")
+val signingStorePassword = providers.environmentVariable("DOCU_STORE_PASSWORD").orNull
+    ?: releaseKeys.getProperty("storePassword")
+val signingKeyAlias = providers.environmentVariable("DOCU_KEY_ALIAS").orNull
+    ?: releaseKeys.getProperty("keyAlias")
+val signingKeyPassword = providers.environmentVariable("DOCU_KEY_PASSWORD").orNull
+    ?: releaseKeys.getProperty("keyPassword")
+val hasReleaseSigning = listOf(signingStoreFile, signingStorePassword,
+    signingKeyAlias, signingKeyPassword).all { !it.isNullOrBlank() }
 if (gradle.startParameter.taskNames.any { it.contains("Release", ignoreCase = true) }) {
     require(docuApplicationId != "com.yourname.docapp") {
         "Set docuApplicationId to your registered Google Play package name."
     }
-    require(releaseKeysFile.isFile) {
-        "Create android/key.properties with your upload key before building a release."
+    require(hasReleaseSigning) {
+        "Configure release signing with android/key.properties or the DOCU_* environment variables."
     }
 }
 
@@ -45,12 +56,12 @@ android {
     }
 
     signingConfigs {
-        if (releaseKeysFile.isFile) {
+        if (hasReleaseSigning) {
             create("release") {
-                keyAlias = releaseKeys.getProperty("keyAlias")
-                keyPassword = releaseKeys.getProperty("keyPassword")
-                storeFile = file(releaseKeys.getProperty("storeFile"))
-                storePassword = releaseKeys.getProperty("storePassword")
+                keyAlias = requireNotNull(signingKeyAlias)
+                keyPassword = requireNotNull(signingKeyPassword)
+                storeFile = file(requireNotNull(signingStoreFile))
+                storePassword = requireNotNull(signingStorePassword)
             }
         }
     }

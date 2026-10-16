@@ -2,7 +2,7 @@
 
 ## Codebase
 
-- `../mobile/` is the Flutter mobile project. This directory is the Flutter desktop project. `../app.py` is the older Streamlit application; it is not the desktop release target.
+- `../mobile/` is the Flutter mobile project. This directory is the Flutter desktop project. `../streamlit/app.py` is the older Streamlit application; it is not the desktop release target.
 - Both Flutter projects use Material 3, Riverpod for state, SQLite for the local library, `pdfrx` for viewing and page assembly, `pdf` for generated PDFs, and file picker/share plugins. Their models, repository, PDF engine, scanner, and theme were copied between projects; they still need a single maintained source of truth.
 - Desktop has a folder-based library, recent external PDFs, search, sorting, multi-select, page editing, merging, compression, export, and Open With integration on Windows. Mobile has camera capture, automatic scanning through the native scanner plugin, crop/rotate/reorder review, PDF import, favorites, and native sharing.
 - Existing PDF editing is page-level. Merge, extract, split, delete, duplicate, rotate, and reorder are largely variants of page assembly. Compression rasterizes pages and loses selectable text. The scanner's automatic edge detection is supplied by the native scanner plugin; manual capture does not do edge detection or perspective correction.
