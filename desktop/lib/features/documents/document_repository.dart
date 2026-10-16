@@ -5,6 +5,7 @@ import 'package:path/path.dart' as p;
 import 'package:sqflite/sqflite.dart';
 
 import '../../core/format.dart';
+import '../../core/file_detection.dart';
 import 'document.dart';
 
 typedef PageCounter = Future<int> Function(String path);
@@ -189,11 +190,17 @@ class DocumentRepository {
     }
   }
 
-  Future<int> _safePageCount(String path) async {
+  Future<int> _validatedPageCount(String path) async {
+    if (!await fileDetection.isPdf(path)) {
+      throw const FormatException('This file is not a PDF.');
+    }
     try {
-      return await pageCounter(path);
-    } catch (_) {
-      return 0;
+      final count = await pageCounter(path);
+      if (count < 1) throw const FormatException('This PDF has no pages.');
+      return count;
+    } catch (e) {
+      if (e is FormatException) rethrow;
+      throw const FormatException('This PDF could not be opened.');
     }
   }
 
@@ -204,25 +211,31 @@ class DocumentRepository {
       bool move = true,
       bool compressed = false,
       String? folderId}) async {
+    final pageCount = await _validatedPageCount(src);
     final id = _newId();
     final fileName = '$id.pdf';
     final dest = p.join(dir.path, fileName);
     await _place(src, dest, move: move);
-    final now = DateTime.now();
-    final doc = Document(
-      id: id,
-      title: cleanTitle(title),
-      fileName: fileName,
-      pageCount: await _safePageCount(dest),
-      sizeBytes: await File(dest).length(),
-      createdAt: now,
-      updatedAt: now,
-      compressed: compressed,
-      folderId: folderId,
-    );
-    await db.insert('documents', doc.toRow());
-    _notify();
-    return doc;
+    try {
+      final now = DateTime.now();
+      final doc = Document(
+        id: id,
+        title: cleanTitle(title),
+        fileName: fileName,
+        pageCount: pageCount,
+        sizeBytes: await File(dest).length(),
+        createdAt: now,
+        updatedAt: now,
+        compressed: compressed,
+        folderId: folderId,
+      );
+      await db.insert('documents', doc.toRow());
+      _notify();
+      return doc;
+    } catch (_) {
+      if (await File(dest).exists()) await File(dest).delete();
+      rethrow;
+    }
   }
 
   /// Replaces a document's PDF content (editing "Replace original").
@@ -230,13 +243,14 @@ class DocumentRepository {
       {bool compressed = false}) async {
     final doc = await get(id);
     if (doc == null) throw StateError('Document not found');
+    final pageCount = await _validatedPageCount(src);
     final dest = pathOf(doc);
     await _place(src, dest, move: true);
     final now = DateTime.now().millisecondsSinceEpoch;
     await db.update(
       'documents',
       {
-        'page_count': await _safePageCount(dest),
+        'page_count': pageCount,
         'size_bytes': await File(dest).length(),
         'updated_at': now,
         'compressed': compressed ? 1 : 0,
@@ -349,6 +363,12 @@ class DocumentRepository {
       if (!name.toLowerCase().endsWith('.pdf') || known.contains(name)) {
         continue;
       }
+      int pageCount;
+      try {
+        pageCount = await _validatedPageCount(e.path);
+      } catch (_) {
+        continue;
+      }
       final stat = await e.stat();
       final id = _newId();
       final fileName = '$id.pdf';
@@ -358,7 +378,7 @@ class DocumentRepository {
         id: id,
         title: cleanTitle(p.basenameWithoutExtension(name)),
         fileName: fileName,
-        pageCount: await _safePageCount(dest),
+        pageCount: pageCount,
         sizeBytes: stat.size,
         createdAt: stat.modified,
         updatedAt: stat.modified,
