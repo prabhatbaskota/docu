@@ -1,0 +1,33 @@
+# Python and local environments
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env
+.env.*
+!.env.example
+.streamlit/secrets.toml
+
+# Editors, caches, and build output
+.DS_Store
+Thumbs.db
+*.log
+*.tmp
+.idea/
+.vscode/
+.dart_tool/
+.gradle/
+build/
+coverage/
+release/
+
+# Local packages and signing material
+*.apk
+*.aab
+*.msi
+*.exe
+*.zip
+*.jks
+*.keystore
+key.properties
+local.properties

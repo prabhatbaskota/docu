@@ -1,0 +1,36 @@
+name: docapp
+description: Clean, local-first document scanner and PDF toolkit.
+publish_to: 'none'
+version: 0.1.2+3
+
+environment:
+  sdk: ^3.5.0
+
+dependencies:
+  flutter:
+    sdk: flutter
+  pdfrx: ^2.1.0
+  pdf: ^3.11.1
+  file_picker: ^10.3.10
+  share_plus: ^10.1.2
+  path_provider: ^2.1.4
+  path: ^1.9.0
+  cunning_document_scanner: ^1.2.3
+  flutter_riverpod: ^3.4.3
+  sqflite: ^2.4.4+1
+  sqflite_common_ffi: ^2.4.3
+  camera: ^0.12.1
+  image: ^4.10.2
+  flutter_reorderable_grid_view: ^5.7.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+  flutter_launcher_icons: ^0.14.4
+  # flutter_launcher_icons and sqflite_common_ffi are added by setup.ps1
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/icon/
