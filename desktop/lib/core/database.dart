@@ -17,7 +17,7 @@ class AppDatabase {
     } else {
       dbPath = p.join(await getDatabasesPath(), 'docapp.db');
     }
-    return openDatabase(dbPath, version: 4, onCreate: _create,
+    return openDatabase(dbPath, version: 5, onCreate: _create,
         onUpgrade: (db, oldVersion, newVersion) async {
       if (oldVersion < 2) {
         await db.execute(
@@ -39,6 +39,7 @@ class AppDatabase {
           opened_at INTEGER NOT NULL
         )''');
       }
+      if (oldVersion < 5) await _ocr(db);
     });
   }
 
@@ -75,6 +76,16 @@ class AppDatabase {
       path TEXT PRIMARY KEY,
       opened_at INTEGER NOT NULL
     )''');
+    await _ocr(db);
+  }
+
+  static Future<void> _ocr(Database db) async {
+    await db.execute(
+        "ALTER TABLE documents ADD COLUMN ocr_status TEXT NOT NULL DEFAULT ''");
+    await db.execute('''CREATE TABLE ocr_pages(
+      document_id TEXT NOT NULL, page_index INTEGER NOT NULL,
+      text TEXT NOT NULL, words TEXT NOT NULL,
+      PRIMARY KEY(document_id,page_index))''');
   }
 }
 

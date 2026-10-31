@@ -1,13 +1,16 @@
 import 'dart:io';
+import 'dart:isolate';
+import 'package:flutter/foundation.dart';
+import 'package:path_provider/path_provider.dart';
+import '../core/document_edges.dart';
+import 'scan/edge_correction_screen.dart';
 
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
-import '../core/image_tools.dart';
 import '../core/pdf_engine.dart' show friendlyError;
 import '../core/toast.dart';
-import 'crop_screen.dart';
 
 class _Shot {
   final int id;
@@ -22,16 +25,26 @@ class _Shot {
 /// Pops with the list of image paths (empty/null = cancelled).
 class CameraScanScreen extends StatefulWidget {
   final bool multiple;
+  final String draftKey;
 
   /// Pages already in the batch (so numbering continues when adding more).
   final int startAt;
-  const CameraScanScreen({super.key, required this.multiple, this.startAt = 0});
+  final String? prompt;
+  final double? guideAspect;
+  const CameraScanScreen({super.key, required this.multiple, this.startAt = 0,this.prompt,this.guideAspect,this.draftKey='scan'});
 
   @override
   State<CameraScanScreen> createState() => _CameraScanScreenState();
 }
 
-class _CameraScanScreenState extends State<CameraScanScreen> {
+class _CameraScanScreenState extends State<CameraScanScreen> with WidgetsBindingObserver {
+  final _tracker = EdgeTracker();
+  bool _detecting = false;
+  int _lastFrame = 0;
+  double? _frameAspect;
+  bool _paused = false;
+  final List<ScanPage> _pages = [];
+  Future<void> _preparation=Future<void>.value();
   CameraController? _c;
   String? _error;
   bool _busy = false; // taking a photo (single mode: also crop step)
@@ -39,11 +52,12 @@ class _CameraScanScreenState extends State<CameraScanScreen> {
   bool _torch = false;
   int _nextId = 0;
   final List<_Shot> _shots = [];
-  final Set<Future<void>> _work = {};
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
     _init();
   }
 
@@ -59,7 +73,7 @@ class _CameraScanScreenState extends State<CameraScanScreen> {
         back,
         ResolutionPreset.ultraHigh,
         enableAudio: false,
-        imageFormatGroup: ImageFormatGroup.jpeg,
+        imageFormatGroup: Platform.isAndroid ? ImageFormatGroup.yuv420 : ImageFormatGroup.bgra8888,
       );
       await c.initialize();
       await c.setFlashMode(FlashMode.off);
@@ -68,11 +82,13 @@ class _CameraScanScreenState extends State<CameraScanScreen> {
         return;
       }
       setState(() => _c = c);
+      await c.lockCaptureOrientation(DeviceOrientation.portraitUp);
+      await c.startImageStream(_frame);
     } on CameraException catch (e) {
       if (mounted) {
         setState(() => _error = e.code.contains('Denied')
             ? 'Camera permission is needed to scan. Allow it in the phone settings.'
-            : 'Camera error: ${e.description ?? e.code}');
+            : 'The camera is unavailable. Close other camera apps and try again.');
       }
     } catch (e) {
       if (mounted) setState(() => _error = friendlyError(e));
@@ -81,8 +97,40 @@ class _CameraScanScreenState extends State<CameraScanScreen> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    SystemChrome.setPreferredOrientations(DeviceOrientation.values);
     _c?.dispose();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.inactive || state == AppLifecycleState.paused) {
+      _paused = true;
+      final old = _c; _c = null; old?.dispose();
+    } else if (state == AppLifecycleState.resumed && _paused) {
+      _paused = false; _init();
+    }
+  }
+
+  Future<void> _frame(CameraImage image) async {
+    final now=DateTime.now().millisecondsSinceEpoch;
+    if (_detecting || _busy || _finishing || now-_lastFrame<110) return;
+    _lastFrame=now; _detecting=true;
+    try {
+      final rotate=(_c?.description.sensorOrientation ?? 90);
+      final portrait=rotate==90 || rotate==270;
+      final sourceW=portrait?image.height:image.width;
+      final sourceH=portrait?image.width:image.height;
+      _frameAspect=sourceW/sourceH;
+      final plane=image.planes.first;
+      final found=await compute(detectPreview,(
+        TransferableTypedData.fromList([plane.bytes]),image.width,image.height,
+        plane.bytesPerRow,plane.bytesPerPixel??1,image.format.group==ImageFormatGroup.bgra8888,rotate));
+      if(mounted) setState(()=>_tracker.update(found));
+    } catch (_) {
+      if(mounted)setState(()=>_tracker.update(null));
+    } finally { _detecting=false; }
   }
 
   Future<void> _toggleTorch() async {
@@ -100,63 +148,66 @@ class _CameraScanScreenState extends State<CameraScanScreen> {
     setState(() => _busy = true);
     HapticFeedback.mediumImpact();
     try {
+      final corners=_tracker.corners==null?null:List<Offset>.of(_tracker.corners!);
+      final frameAspect=_frameAspect;
+      await c.stopImageStream();
       final file = await c.takePicture();
       if (!mounted) return;
-      if (widget.multiple) {
-        // Ready for the next shot immediately; prepare this one in background.
-        final shot = _Shot(_nextId++);
-        setState(() {
-          _shots.add(shot);
-          _busy = false;
-        });
-        late final Future<void> job;
-        job = normalizeImage(file.path).then((n) {
-          shot.path = n.$1;
-          if (mounted) setState(() {});
-        }).catchError((Object e) {
-          _shots.remove(shot);
-          if (mounted) {
-            setState(() {});
-            toast(context, friendlyError(e));
+      final dir=Directory('${(await getApplicationSupportDirectory()).path}/scan_pages');
+      await dir.create(recursive:true);
+      final original=await File(file.path).copy('${dir.path}/${DateTime.now().microsecondsSinceEpoch}.jpg');
+      final page=ScanPage(original.path,corners);
+      _pages.add(page);
+      await ScanDraft.save(_pages,key:widget.draftKey);
+      final shot=_Shot(_nextId++)..path=original.path;
+      _shots.add(shot);
+      _preparation=_preparation.then((_)async{
+        try {
+          final n=await normalizeScanPhoto(original.path);
+          page.path=n.$1; shot.path=n.$1;
+          if(corners!=null && frameAspect!=null) {
+            final photoAspect=n.$2/n.$3;
+            final adjusted=[for(final p in corners)Offset(
+              photoAspect > frameAspect ? 0.5+(p.dx-0.5)*frameAspect/photoAspect : p.dx,
+              photoAspect < frameAspect ? 0.5+(p.dy-0.5)*photoAspect/frameAspect : p.dy)];
+            page.corners=List.of(adjusted);page.automatic=List.of(adjusted);
           }
-        }).whenComplete(() => _work.remove(job));
-        _work.add(job);
+          await ScanDraft.save(_pages,key:widget.draftKey);
+          if(mounted)setState((){});
+        } catch (_) {
+          if(mounted)toast(context,'Photo kept. It will be opened for correction when you tap Done.');
+        }
+      });
+      if(!mounted)return;
+      if (widget.multiple) {
+        setState(()=>_busy=false);
+        await c.startImageStream(_frame);
         return;
       }
-
-      // Single page: normalize, crop, finish.
-      final n = await normalizeImage(file.path);
-      if (!mounted) return;
-      final rect = await Navigator.of(context).push<Rect>(
-        MaterialPageRoute(
-          fullscreenDialog: true,
-          builder: (_) => CropScreen(path: n.$1, imgW: n.$2, imgH: n.$3),
-        ),
-      );
-      if (rect == null) {
-        if (mounted) setState(() => _busy = false); // retake
-        return;
-      }
-      final full = rect.width >= n.$2 - 2 && rect.height >= n.$3 - 2;
-      final path = full ? n.$1 : await cropImageFile(n.$1, rect);
-      if (!mounted) return;
-      Navigator.pop(context, <String>[path]);
+      await _done();
     } catch (e) {
       if (!mounted) return;
       setState(() => _busy = false);
-      toast(context, friendlyError(e));
+      toast(context, 'Could not prepare this photo. Captured pages are kept; tap Done to recover them.');
     }
   }
 
   Future<void> _done() async {
     setState(() => _finishing = true);
-    await Future.wait(_work.toList());
-    if (!mounted) return;
-    final paths = [
-      for (final s in _shots)
-        if (s.path != null) s.path!
-    ];
-    Navigator.pop(context, paths);
+    try {
+      await _preparation;
+      if(_c?.value.isStreamingImages==true)await _c!.stopImageStream();
+      if(!mounted)return;
+      final paths=await Navigator.of(context).push<List<String>>(MaterialPageRoute(
+        builder:(_)=>EdgeCorrectionScreen(pages:_pages,draftKey:widget.draftKey)));
+      if(!mounted)return;
+      if(paths!=null){Navigator.pop(context,paths);return;}
+      if(!widget.multiple){_pages.clear();_shots.clear();await ScanDraft.clear(key:widget.draftKey);}
+      setState(() { _finishing=false; _busy=false; });
+      await _c?.startImageStream(_frame);
+    } catch (_) {
+      if(mounted){setState(() { _finishing=false; _busy=false; });toast(context,'Could not open correction. Your pages are kept.');}
+    }
   }
 
   Future<bool> _confirmDiscard() async {
@@ -175,6 +226,7 @@ class _CameraScanScreenState extends State<CameraScanScreen> {
         ],
       ),
     );
+    if(ok==true){await _preparation;await ScanDraft.clear(key:widget.draftKey);}
     return ok == true;
   }
 
@@ -251,9 +303,9 @@ class _CameraScanScreenState extends State<CameraScanScreen> {
   Widget build(BuildContext context) {
     final c = _c;
     return PopScope(
-      canPop: _shots.isEmpty && !_finishing,
+      canPop: _shots.isEmpty && !_finishing && !_busy,
       onPopInvokedWithResult: (didPop, _) async {
-        if (didPop || _finishing) return;
+        if (didPop || _finishing || _busy) return;
         if (await _confirmDiscard() && context.mounted) Navigator.pop(context);
       },
       child: Scaffold(
@@ -280,7 +332,7 @@ class _CameraScanScreenState extends State<CameraScanScreen> {
                                 tooltip: 'Close',
                                 icon: const Icon(Icons.close,
                                     color: Colors.white),
-                                onPressed: _finishing
+                                onPressed: _finishing || _busy
                                     ? null
                                     : () async {
                                         if (await _confirmDiscard() &&
@@ -291,9 +343,9 @@ class _CameraScanScreenState extends State<CameraScanScreen> {
                               ),
                               const Spacer(),
                               Text(
-                                widget.multiple
+                                widget.prompt ?? (widget.multiple
                                     ? 'Page ${widget.startAt + _shots.length + 1}'
-                                    : 'Single page',
+                                    : 'Single page'),
                                 style: const TextStyle(
                                     color: Colors.white,
                                     fontWeight: FontWeight.w600),
@@ -316,7 +368,12 @@ class _CameraScanScreenState extends State<CameraScanScreen> {
                               borderRadius: BorderRadius.circular(16),
                               child: AspectRatio(
                                 aspectRatio: 1 / c.value.aspectRatio,
-                                child: CameraPreview(c),
+                                child: Stack(fit:StackFit.expand,children:[CameraPreview(c),
+                                  if(widget.guideAspect!=null)Center(child:FractionallySizedBox(widthFactor:.85,
+                                    child:AspectRatio(aspectRatio:widget.guideAspect!,child:DecoratedBox(
+                                      decoration:BoxDecoration(border:Border.all(color:Colors.white70,width:2),borderRadius:BorderRadius.circular(12)))))),
+                                  IgnorePointer(child:LayoutBuilder(builder:(context,box)=>CustomPaint(
+                                    painter:PageOutline([for(final p in _tracker.corners ?? <Offset>[]) Offset(p.dx*box.maxWidth,p.dy*box.maxHeight)]))))]),
                               ),
                             ),
                           ),

@@ -6,6 +6,8 @@ import 'package:pdfrx/pdfrx.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 import 'core/database.dart';
+import 'core/scan_cleanup.dart';
+import 'core/ocr_service.dart';
 import 'core/pdf_engine.dart';
 import 'features/documents/document_repository.dart';
 import 'features/branding/theme.dart';
@@ -19,7 +21,8 @@ import 'features/tools_page.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  pdfrxFlutterInitialize();
+  await cleanOldScanImages();
+  await pdfrxFlutterInitialize();
   if (Platform.isWindows || Platform.isLinux || Platform.isMacOS) {
     sqfliteFfiInit();
     databaseFactory = databaseFactoryFfi;
@@ -36,6 +39,7 @@ Future<void> main() async {
 
   await repo.purgeDeleted();
   await repo.syncFromDisk(); // adopt PDFs created by earlier versions
+  OcrService(repo).resume();
 
   final saved = await settings.get('theme');
   var theme = ThemeMode.system;

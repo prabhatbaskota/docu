@@ -7,8 +7,9 @@ import 'package:flutter_reorderable_grid_view/widgets/widgets.dart';
 import '../../core/image_tools.dart';
 import '../../core/pdf_engine.dart' show friendlyError;
 import '../../core/toast.dart';
-import '../camera_scan_screen.dart';
+import 'import_scan.dart';
 import '../crop_screen.dart';
+import 'edge_correction_screen.dart';
 
 class _Img {
   final int id;
@@ -40,6 +41,16 @@ class _ScanReviewScreenState extends State<ScanReviewScreen> {
   void initState() {
     super.initState();
     _imgs.addAll([for (final p in widget.initial) _Img(_nextId++, p)]);
+    _persist();
+  }
+
+  void _persist() {
+    ScanDraft.saveReview([for (final im in _imgs) im.path])
+        .catchError((Object _) {
+      if (mounted) {
+        toast(context, 'Could not update the saved draft. Check free space.');
+      }
+    });
   }
 
   @override
@@ -55,6 +66,7 @@ class _ScanReviewScreenState extends State<ScanReviewScreen> {
   void _delete() => setState(() {
         _imgs.removeWhere((i) => _sel.contains(i.id));
         _sel.clear();
+        _persist();
       });
 
   Future<void> _rotate() async {
@@ -64,6 +76,7 @@ class _ScanReviewScreenState extends State<ScanReviewScreen> {
         final out = await rotateImageFile(im.path);
         im.path = out;
       }
+      _persist();
     } catch (e) {
       if (mounted) toast(context, friendlyError(e));
     }
@@ -73,7 +86,8 @@ class _ScanReviewScreenState extends State<ScanReviewScreen> {
   Future<void> _crop() async {
     final im = _imgs.firstWhere((i) => _sel.contains(i.id));
     try {
-      final decoded = await decodeImageFromList(await File(im.path).readAsBytes());
+      final decoded =
+          await decodeImageFromList(await File(im.path).readAsBytes());
       final w = decoded.width, h = decoded.height;
       decoded.dispose();
       if (!mounted) return;
@@ -91,6 +105,7 @@ class _ScanReviewScreenState extends State<ScanReviewScreen> {
       if (!mounted) return;
       setState(() {
         im.path = out;
+        _persist();
         _busy = false;
       });
     } catch (e) {
@@ -101,15 +116,11 @@ class _ScanReviewScreenState extends State<ScanReviewScreen> {
   }
 
   Future<void> _addMore() async {
-    final more = await Navigator.of(context).push<List<String>>(
-      MaterialPageRoute(
-        fullscreenDialog: true,
-        builder: (_) => CameraScanScreen(multiple: true, startAt: _imgs.length),
-      ),
-    );
+    final more = await importScan(context);
     if (more == null || more.isEmpty || !mounted) return;
     setState(() {
       _imgs.addAll([for (final p in more) _Img(_nextId++, p)]);
+      _persist();
     });
   }
 
@@ -120,6 +131,7 @@ class _ScanReviewScreenState extends State<ScanReviewScreen> {
       _imgs
         ..clear()
         ..addAll(updated);
+      _persist();
     });
     HapticFeedback.lightImpact();
   }
@@ -128,7 +140,8 @@ class _ScanReviewScreenState extends State<ScanReviewScreen> {
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: Text('Discard ${_imgs.length} page${_imgs.length == 1 ? '' : 's'}?'),
+        title: Text(
+            'Discard ${_imgs.length} page${_imgs.length == 1 ? '' : 's'}?'),
         actions: [
           TextButton(
               onPressed: () => Navigator.pop(ctx, false),
@@ -139,6 +152,7 @@ class _ScanReviewScreenState extends State<ScanReviewScreen> {
         ],
       ),
     );
+    if (ok == true) await ScanDraft.clear();
     return ok == true;
   }
 
@@ -197,8 +211,7 @@ class _ScanReviewScreenState extends State<ScanReviewScreen> {
               children: [
                 Icon(icon, size: 22, color: color),
                 const SizedBox(height: 2),
-                Text(label,
-                    style: TextStyle(fontSize: 11, color: color)),
+                Text(label, style: TextStyle(fontSize: 11, color: color)),
               ],
             ),
           ),
@@ -236,8 +249,7 @@ class _ScanReviewScreenState extends State<ScanReviewScreen> {
                   _action(Icons.rotate_right, 'Rotate', _rotate),
                   _action(Icons.delete_outline, 'Delete', _delete,
                       color: error),
-                  _action(Icons.deselect, 'Clear',
-                      () => setState(_sel.clear)),
+                  _action(Icons.deselect, 'Clear', () => setState(_sel.clear)),
                 ]),
         ),
       ),
@@ -276,7 +288,8 @@ class _ScanReviewScreenState extends State<ScanReviewScreen> {
             ),
             Expanded(
               child: _imgs.isEmpty
-                  ? const Center(child: Text('No pages left. Add a page below.'))
+                  ? const Center(
+                      child: Text('No pages left. Add a page below.'))
                   : ReorderableBuilder.builder(
                       scrollController: _scroll,
                       itemCount: _imgs.length,
@@ -284,8 +297,7 @@ class _ScanReviewScreenState extends State<ScanReviewScreen> {
                       childBuilder: (itemBuilder) => GridView.builder(
                         controller: _scroll,
                         padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-                        gridDelegate:
-                            SliverGridDelegateWithFixedCrossAxisCount(
+                        gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
                           crossAxisCount: cols,
                           mainAxisSpacing: 12,
                           crossAxisSpacing: 12,

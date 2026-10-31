@@ -18,6 +18,7 @@ import 'page_card.dart';
 import 'page_picker_screen.dart';
 import 'pickers.dart';
 import 'scan_flow.dart';
+import 'compress/compress_flow.dart';
 
 class _Pg {
   final PageRef ref;
@@ -392,14 +393,16 @@ class _PageEditorState extends State<PageEditor> {
       final tmp = await tempPdfPath();
       if (!mounted) return;
       var message = 'Saved ${refs.length} page${refs.length == 1 ? '' : 's'}';
-      final q = r.quality;
+      final q = r.quality == null
+          ? null
+          : await askQuality(context, originalBytes: _estimateBytes(refs));
+      if (r.quality != null && q == null) return;
+      if(!mounted)return;
       if (q != null) {
         final before = _estimateBytes(refs);
-        await runWithProgress<void>(
-          context,
-          'Compressing...',
-          (report) => engine.compress(refs, tmp, q, onProgress: report),
-        );
+        if (!mounted) return;
+        if (!await compressWithOptions(context, refs, tmp, q)) return;
+        if (!mounted) return;
         final after = await File(tmp).length();
         message =
             '$message · Estimated original: ${fmtSize(before)} · Compressed: ${fmtSize(after)}';
@@ -411,13 +414,13 @@ class _PageEditorState extends State<PageEditor> {
         );
       }
       final String id;
-      if (r.replace && orig != null) {
+      if (r.replace && orig != null && q == null) {
         id = (await repo.replaceFile(orig.id, tmp,
                 compressed: q != null || alreadyCompressed))
             .id;
       } else {
         id = (await repo.addFile(tmp,
-                title: r.name,
+                title: q == null ? r.name : '${r.name}_compressed',
                 compressed: q != null || alreadyCompressed,
                 folderId: widget.outputFolderId))
             .id;
@@ -445,6 +448,8 @@ class _PageEditorState extends State<PageEditor> {
       if (!mounted) return;
       setState(() => _busy = false);
       _toast(friendlyError(e));
+    } finally {
+      if (mounted) setState(() => _busy = false);
     }
   }
 

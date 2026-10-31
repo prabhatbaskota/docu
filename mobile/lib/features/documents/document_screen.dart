@@ -7,6 +7,7 @@ import 'package:pdfrx/pdfrx.dart';
 import '../editor_launch.dart';
 import 'actions.dart';
 import 'providers.dart';
+import 'ocr_actions.dart';
 
 class DocumentScreen extends ConsumerWidget {
   final String id;
@@ -39,6 +40,10 @@ class DocumentScreen extends ConsumerWidget {
           ),
         ),
         actions: [
+          IconButton(
+              tooltip: 'Text',
+              icon: const Icon(Icons.text_snippet_outlined),
+              onPressed: () => showTextActions(context, doc)),
           IconButton(
             tooltip:
                 doc.favorite ? 'Remove from favorites' : 'Add to favorites',

@@ -18,17 +18,22 @@ class PageRef {
 }
 
 /// How hard to compress. Pages are re-rendered as JPEG at [dpi].
-enum CompressQuality {
-  small('Small', 'Smallest file. Good for chat and email.', 100, 55),
-  balanced('Balanced', 'Good for most documents.', 140, 70),
-  high('High', 'Sharper text, larger file.', 200, 82);
-
-  const CompressQuality(this.label, this.hint, this.dpi, this.jpegQuality);
+class CompressQuality {
+  static const small = CompressQuality('Small', 'Smallest file.', 100, 55);
+  static const balanced = CompressQuality(
+      'Optimal (recommended)', 'Automatic size and quality.', 175, 73);
+  static const high = CompressQuality('High', 'Sharper text.', 200, 82);
+  static const values = [balanced];
+  const CompressQuality(this.label, this.hint, this.dpi, this.jpegQuality,
+      {this.targetBytes});
   final String label;
   final String hint;
   final int dpi;
   final int jpegQuality;
+  final int? targetBytes;
 }
+
+class CompressionCancelled implements Exception {}
 
 typedef ProgressFn = void Function(int done, int total);
 
@@ -64,7 +69,20 @@ Uint8List _encodeJpg((Uint8List, int, int, int) a) {
     numChannels: 4,
     order: img.ChannelOrder.bgra,
   );
-  return img.encodeJpg(im, quality: a.$4);
+  var colored = 0, sampled = 0;
+  for (var y = 0; y < im.height; y += 8) {
+    for (var x = 0; x < im.width; x += 8) {
+      final p = im.getPixel(x, y);
+      sampled++;
+      if (math.max(p.r, math.max(p.g, p.b)) -
+              math.min(p.r, math.min(p.g, p.b)) >
+          18) {
+        colored++;
+      }
+    }
+  }
+  final output = colored / math.max(1, sampled) < .015 ? img.grayscale(im) : im;
+  return img.encodeJpg(output, quality: a.$4);
 }
 
 class PdfrxEngine implements PdfEngine {
@@ -80,11 +98,20 @@ class PdfrxEngine implements PdfEngine {
 
   @override
   Future<void> assemble(List<PageRef> pages, String outPath) async {
+    if (pages.isEmpty) {
+      throw const FormatException('Choose at least one page to merge.');
+    }
     final docs = <String, PdfDocument>{};
     PdfDocument? out;
     try {
       for (final s in {for (final r in pages) r.src}) {
         docs[s] = await PdfDocument.openFile(s);
+      }
+      for (final r in pages) {
+        if (r.index < 0 || r.index >= docs[r.src]!.pages.length) {
+          throw const FormatException(
+              'A selected page is no longer available. Reopen the files and try again.');
+        }
       }
       out = await PdfDocument.createNew(sourceName: p.basename(outPath));
       out.pages = [for (final r in pages) docs[r.src]!.pages[r.index]];
@@ -105,6 +132,47 @@ class PdfrxEngine implements PdfEngine {
     CompressQuality quality, {
     ProgressFn? onProgress,
   }) async {
+    if (pages.isEmpty) {
+      throw const FormatException('Choose at least one page to compress.');
+    }
+    if (quality.targetBytes != null) {
+      final candidate = '$outPath.candidate.pdf';
+      final best = '$outPath.best.pdf';
+      var smallest = 1 << 62;
+      var fits = false;
+      try {
+        for (final dpi in [200, 175, 150, 125, 100, 80, 60]) {
+          var low = 40, high = 90;
+          while (low <= high) {
+            final q = (low + high) ~/ 2;
+            onProgress?.call(0, pages.length);
+            await compress(
+                pages, candidate, CompressQuality('Target', '', dpi, q),
+                onProgress: onProgress);
+            final bytes = await File(candidate).length();
+            final candidateFits = bytes <= quality.targetBytes!;
+            if (candidateFits || (!fits && bytes < smallest)) {
+              await File(candidate).copy(best);
+              smallest = bytes;
+            }
+            if (candidateFits) {
+              fits = true;
+              low = q + 1;
+            } else {
+              high = q - 1;
+            }
+          }
+          if (fits) break;
+        }
+        await File(best).copy(outPath);
+      } finally {
+        for (final path in [candidate, best]) {
+          final f = File(path);
+          if (await f.exists()) await f.delete();
+        }
+      }
+      return;
+    }
     final docs = <String, PdfDocument>{};
     try {
       for (final s in {for (final r in pages) r.src}) {
@@ -186,10 +254,14 @@ class PdfrxEngine implements PdfEngine {
 final PdfEngine engine = PdfrxEngine();
 
 String friendlyError(Object e) {
+  if (e is CompressionCancelled) return 'Compression cancelled. Original kept.';
   final s = e.toString();
   if (s.toLowerCase().contains('password')) {
     return 'This PDF is password-protected.';
   }
   if (e is FormatException) return e.message;
-  return s;
+  if (e is FileSystemException) {
+    return 'Could not read or save the file. Check free space and try again.';
+  }
+  return 'Could not process this document. Please reopen it and try again.';
 }

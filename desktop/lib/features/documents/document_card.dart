@@ -87,7 +87,8 @@ class DocumentCard extends StatelessWidget {
                           : 'Add to favorites',
                       icon: Icon(
                         doc.favorite ? Icons.star : Icons.star_border,
-                        color: doc.favorite ? Colors.amber : cs.onSurfaceVariant,
+                        color:
+                            doc.favorite ? Colors.amber : cs.onSurfaceVariant,
                       ),
                       onPressed: onFavorite,
                     ),
@@ -110,6 +111,19 @@ class DocumentCard extends StatelessWidget {
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: tt.titleSmall),
+                  if (doc.snippet != null)
+                    Text(doc.snippet!,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: tt.bodySmall),
+                  if (doc.ocrStatus.isNotEmpty)
+                    Text(
+                        switch (doc.ocrStatus) {
+                          'reading' => 'Reading text…',
+                          'ready' => 'Text ready',
+                          _ => 'Text reading failed'
+                        },
+                        style: tt.labelSmall),
                   const SizedBox(height: 2),
                   Text(
                     '${doc.pageCount} page${doc.pageCount == 1 ? '' : 's'}  ·  ${fmtDate(doc.updatedAt)}',
@@ -191,6 +205,19 @@ class DocumentRow extends StatelessWidget {
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: tt.titleSmall),
+                    if (doc.snippet != null)
+                      Text(doc.snippet!,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: tt.bodySmall),
+                    if (doc.ocrStatus.isNotEmpty)
+                      Text(
+                          switch (doc.ocrStatus) {
+                            'reading' => 'Reading text…',
+                            'ready' => 'Text ready',
+                            _ => 'Text reading failed'
+                          },
+                          style: tt.labelSmall),
                     const SizedBox(height: 2),
                     Text(
                       '${doc.pageCount} page${doc.pageCount == 1 ? '' : 's'}  ·  ${fmtDate(doc.updatedAt)}',
@@ -202,9 +229,8 @@ class DocumentRow extends StatelessWidget {
                 ),
               ),
               IconButton(
-                tooltip: doc.favorite
-                    ? 'Remove from favorites'
-                    : 'Add to favorites',
+                tooltip:
+                    doc.favorite ? 'Remove from favorites' : 'Add to favorites',
                 icon: Icon(
                   doc.favorite ? Icons.star : Icons.star_border,
                   color: doc.favorite ? Colors.amber : cs.onSurfaceVariant,

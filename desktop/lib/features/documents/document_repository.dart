@@ -44,6 +44,8 @@ class DocumentRepository {
     if (!_changes.isClosed) _changes.add(null);
   }
 
+  void refresh() => _notify();
+
   Future<void> dispose() => _changes.close();
 
   static int _seq = 0;
@@ -63,7 +65,9 @@ class DocumentRepository {
     if (q.favoritesOnly) where.add('favorite = 1');
     final text = q.text.trim();
     if (text.isNotEmpty) {
-      where.add(r"title LIKE ? ESCAPE '\'");
+      where.add(
+          r"(title LIKE ? ESCAPE '\' OR EXISTS (SELECT 1 FROM ocr_pages o WHERE o.document_id=documents.id AND o.text LIKE ? ESCAPE '\'))");
+      args.add('%${_escapeLike(text)}%');
       args.add('%${_escapeLike(text)}%');
     }
     final order = switch (q.sort) {
@@ -76,7 +80,27 @@ class DocumentRepository {
         whereArgs: args,
         orderBy: order,
         limit: limit);
-    return rows.map(Document.fromRow).toList();
+    final result = <Document>[];
+    for (final row in rows) {
+      final data = Map<String, Object?>.from(row);
+      if (text.isNotEmpty) {
+        final matches = await db.query('ocr_pages',
+            columns: ['text'],
+            where: r"document_id = ? AND text LIKE ? ESCAPE '\'",
+            whereArgs: [row['id'], '%${_escapeLike(text)}%'],
+            orderBy: 'page_index',
+            limit: 1);
+        if (matches.isNotEmpty) {
+          final content = matches.first['text'] as String;
+          final match = content.toLowerCase().indexOf(text.toLowerCase());
+          final start = (match - 30).clamp(0, content.length);
+          data['snippet'] =
+              '${start > 0 ? '…' : ''}${content.substring(start, (start + 120).clamp(0, content.length)).replaceAll('\n', ' ')}';
+        }
+      }
+      result.add(Document.fromRow(data));
+    }
+    return result;
   }
 
   Future<Document?> get(String id) async {
@@ -247,6 +271,7 @@ class DocumentRepository {
     final dest = pathOf(doc);
     await _place(src, dest, move: true);
     final now = DateTime.now().millisecondsSinceEpoch;
+    await db.delete('ocr_pages', where: 'document_id = ?', whereArgs: [id]);
     await db.update(
       'documents',
       {
@@ -254,6 +279,7 @@ class DocumentRepository {
         'size_bytes': await File(dest).length(),
         'updated_at': now,
         'compressed': compressed ? 1 : 0,
+        'ocr_status': '',
       },
       where: 'id = ?',
       whereArgs: [id],
@@ -330,6 +356,7 @@ class DocumentRepository {
     final rows = await db.query('documents',
         where: 'id IN (${_inClause(ids)}) AND deleted = 1', whereArgs: ids);
     for (final r in rows) {
+      await db.delete('ocr_pages',where:'document_id = ?',whereArgs:[r['id']]);
       final f = File(p.join(dir.path, r['file_name'] as String));
       try {
         if (await f.exists()) await f.delete();

@@ -1,0 +1,17 @@
+name: docu_core_verification
+publish_to: none
+environment:
+  sdk: ^3.10.0
+dependencies:
+  flutter:
+    sdk: flutter
+  image: 4.10.2
+  path: 1.9.1
+  path_provider: 2.1.5
+  pdf: 3.13.1
+  pdfrx: 2.6.5
+  sqflite: 2.4.4+1
+  sqflite_common_ffi: 2.4.3
+dev_dependencies:
+  flutter_test:
+    sdk: flutter

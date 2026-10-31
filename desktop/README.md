@@ -1,76 +1,46 @@
-# docu
+# docu desktop
 
-Local-first document scanner and PDF toolkit (Flutter). No accounts, ads or analytics.
+Local-first Windows PDF library and editor. No accounts, ads or analytics.
 
-## Desktop edition
+## Features
 
-The Windows app opens on a desktop library with local folders. Create, rename,
-and delete folders; import PDFs into a folder; select and move multiple PDFs;
-search, sort, read, edit pages, merge, compress, convert images to PDF, and
-export a PDF. Deleting a folder moves its PDFs to Unfiled. Library folders are
-categories inside the app; the underlying PDF files stay in the app's local
-document directory. No account or cloud service is required.
+- Local library folders, Recent Files, favorites, search, sorting and multi-selection
+- Photo import with page detection, perspective correction, sequential review and draft recovery
+- ID/card front and back on one A4 page at physical ID-1 or passport size
+- Page editing, reorder, replace/insert, merge and image-to-PDF conversion
+- Optimal or target-size compression with cancellation and preserved originals
+- Offline OCR, full-text search, text export and searchable PDF export
 
-For a Windows build, install Flutter and Visual Studio with the Desktop
-development with C++ workload, then run:
+Library folders are categories inside the app. Deleting a folder moves its PDFs
+to Unfiled; underlying PDFs stay in the app's document directory.
+
+## Build
+
+Install Flutter 3.38+ (Dart 3.10+) and Visual Studio with the Desktop development
+with C++ workload. Run from desktop/:
 
 ```powershell
-flutter clean
-flutter create --platforms=windows --project-name docapp --no-pub .
 flutter pub get --enforce-lockfile
+flutter analyze
 flutter test
 flutter build windows --release --no-pub
 ```
 
-The app bundle is at `build/windows/x64/runner/Release`. Distribute the full
-folder, not just `docapp.exe`. The repository's GitHub Actions workflow
-builds a release candidate when a `v*` tag is pushed. Follow the
-[Windows release audit](WINDOWS_RELEASE_AUDIT.md) and
-[product audit](DOCU_PRODUCT_AUDIT.md) before publishing its ZIP
-and installer to GitHub Releases. Users download the installer on their Windows
-PC. A mobile app can
-provide a link to the release, but opening that link on a phone cannot install
-the app on a PC.
+Distribute the complete build/windows/x64/runner/Release folder. The repository
+Windows workflow builds desktop/ when a version tag is pushed. See the
+[Windows release audit](WINDOWS_RELEASE_AUDIT.md) and [product audit](DOCU_PRODUCT_AUDIT.md)
+before publishing an installer.
 
-## Features
-- Scan (single / multiple, manual capture, batch review, crop, rotate) or auto-detect via Google scanner
-- Page editor: big thumbnails, drag-reorder, replace / insert pages, colour + letter per source PDF
-- Merge, "Compress and merge", standalone Compress (always saves a copy)
-- Photos to PDF, import, share, favorites, search, Today / Yesterday / date grouping
+## OCR
 
-## Setup (easy: run .\setup.ps1)
-```
-flutter pub add flutter_riverpod sqflite camera image flutter_reorderable_grid_view
-flutter pub add --dev flutter_launcher_icons sqflite_common_ffi
-dart run flutter_launcher_icons
-flutter test
-flutter run
-```
-Android: `android:label="docu"` in AndroidManifest.xml, CAMERA permission, minSdk 24+.
-iOS (needs a Mac): `CFBundleDisplayName` = docu, `NSCameraUsageDescription`.
+Install Tesseract separately with eng, hin and nep language data, then select its
+executable in Settings. No recognition models or Tesseract binaries are downloaded
+at runtime. ML Kit is used by the separate [mobile app](../mobile/README.md).
 
-## Build an Android APK
-```powershell
-flutter pub get
-flutter analyze
-flutter test
-flutter build apk --release
-```
-The APK is written to `build/app/outputs/flutter-apk/app-release.apk`.
-The first build needs internet access to download Android dependencies and PDFium native libraries from GitHub.
+## Validation and limits
 
-For an ARM64-only APK:
-```powershell
-flutter build apk --release --target-platform android-arm64 --split-per-abi
-```
-This produces `build/app/outputs/flutter-apk/app-arm64-v8a-release.apk`.
-
-The Gradle settings limit build memory and disable Kotlin incremental compilation to avoid Windows cache failures when the project and Pub cache are on different drives. Release builds currently use the debug signing key; configure your own release key before publishing.
-
-## Structure
-- `lib/core` PDF engine (everything is `assemble(List<PageRef>)`; `compress` re-renders pages as JPEG), progress, toast, image tools
-- `lib/features` documents (Home/Favorites/selection), scan, page editor, compress, branding, settings
-
-## Known limits
-- Compression turns pages into images (text no longer selectable)
-- No automatic edge detection / perspective correction yet (OpenCV is the planned step)
+See [the feature handoff](../handoff/README.md) for test results and manual checks.
+Photo import is supported; live Windows webcam capture is not implemented. Native
+OpenCV tests/builds require the C++ toolchain. JPEG compression rasterizes selectable
+source text. Unreferenced scan JPEGs older than seven days are cleaned at startup;
+active drafts are retained. Rebuild the Windows app/installer for the updated icons.

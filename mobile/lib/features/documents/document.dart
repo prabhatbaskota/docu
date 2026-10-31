@@ -39,6 +39,8 @@ class Document {
   final bool favorite;
   final bool compressed;
   final String? folderId;
+  final String ocrStatus;
+  final String? snippet;
 
   const Document({
     required this.id,
@@ -51,6 +53,8 @@ class Document {
     this.favorite = false,
     this.compressed = false,
     this.folderId,
+    this.ocrStatus = '',
+    this.snippet,
   });
 
   factory Document.fromRow(Map<String, Object?> r) => Document(
@@ -64,6 +68,8 @@ class Document {
         favorite: (r['favorite'] as int) == 1,
         compressed: r['compressed'] == 1,
         folderId: r['folder_id'] as String?,
+        ocrStatus: r['ocr_status'] as String? ?? '',
+        snippet: r['snippet'] as String?,
       );
 
   Map<String, Object?> toRow() => {

@@ -2,11 +2,9 @@ import 'package:flutter/material.dart';
 
 /// Modal progress dialog around [task]. The task reports (done, total) and
 /// the bar fills; the dialog closes itself when the task ends (or throws).
-Future<T> runWithProgress<T>(
-  BuildContext context,
-  String title,
-  Future<T> Function(void Function(int done, int total) report) task,
-) async {
+Future<T> runWithProgress<T>(BuildContext context, String title,
+    Future<T> Function(void Function(int done, int total) report) task,
+    {VoidCallback? onCancel}) async {
   final progress = ValueNotifier<double?>(null);
   final nav = Navigator.of(context, rootNavigator: true);
   showDialog<void>(
@@ -31,6 +29,10 @@ Future<T> runWithProgress<T>(
             ],
           ),
         ),
+        actions: [
+          if (onCancel != null)
+            TextButton(onPressed: onCancel, child: const Text('Cancel'))
+        ],
       ),
     ),
   );

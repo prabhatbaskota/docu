@@ -1,8 +1,11 @@
+import 'dart:io';
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../branding/docu_logo.dart';
 import '../documents/providers.dart';
+import '../../core/database.dart';
 
 class SettingsPage extends ConsumerWidget {
   const SettingsPage({super.key});
@@ -53,6 +56,23 @@ class SettingsPage extends ConsumerWidget {
             ),
           ),
           const SizedBox(height: 16),
+          _OcrLanguage(store: ref.read(settingsStoreProvider)),
+          if (Platform.isWindows)
+            ListTile(
+                title: const Text('Tesseract OCR'),
+                subtitle: const Text(
+                    'Use a local Tesseract executable with eng, hin and nep language data.'),
+                trailing: const Icon(Icons.folder_open),
+                onTap: () async {
+                  final selected = await FilePicker.platform.pickFiles(
+                      type: FileType.custom, allowedExtensions: ['exe']);
+                  final path = selected?.files.single.path;
+                  if (path != null) {
+                    await ref
+                        .read(settingsStoreProvider)
+                        .set('tesseract_path', path);
+                  }
+                }),
           const ListTile(
             leading: Icon(Icons.lock_outline),
             title: Text('Private by default'),
@@ -62,10 +82,43 @@ class SettingsPage extends ConsumerWidget {
           const ListTile(
             leading: Icon(Icons.info_outline),
             title: Text('Version'),
-            subtitle: Text('0.1.7'),
+            subtitle: Text('0.1.1'),
           ),
         ],
       ),
     );
   }
+}
+
+class _OcrLanguage extends StatefulWidget {
+  final SettingsStore store;
+  const _OcrLanguage({required this.store});
+  @override
+  State<_OcrLanguage> createState() => _OcrLanguageState();
+}
+
+class _OcrLanguageState extends State<_OcrLanguage> {
+  String value = 'auto';
+  @override
+  void initState() {
+    super.initState();
+    widget.store.get('ocr_language').then((v) {
+      if (mounted) setState(() => value = v ?? 'auto');
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) => ListTile(
+      title: const Text('Text recognition'),
+      trailing: DropdownButton<String>(
+          value: value,
+          items: const [
+            DropdownMenuItem(value: 'auto', child: Text('Auto')),
+            DropdownMenuItem(value: 'english', child: Text('English')),
+            DropdownMenuItem(value: 'devanagari', child: Text('Devanagari'))
+          ],
+          onChanged: (v) {
+            setState(() => value = v!);
+            widget.store.set('ocr_language', v!);
+          }));
 }
