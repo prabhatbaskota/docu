@@ -1,0 +1,2 @@
+# Python / Streamlit dependencies only. Flutter uses each app's pubspec.yaml.
+-r streamlit/requirements.txt

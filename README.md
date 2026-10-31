@@ -1,5 +1,7 @@
 # docu
 
+Moving to another computer? Start with [the whole-project migration guide](MIGRATION.md).
+
 This repository contains three applications:
 
 | Directory | Application | Build or run instructions |
