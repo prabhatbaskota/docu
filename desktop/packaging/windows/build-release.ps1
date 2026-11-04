@@ -2,6 +2,7 @@
 param([Parameter(Mandatory = $true)][string]$Version)
 
 $ErrorActionPreference = 'Stop'
+if (-not $env:RUNNER_TEMP) { $env:RUNNER_TEMP = [IO.Path]::GetTempPath() }
 if ($Version -notmatch '^v[0-9]+\.[0-9]+\.[0-9]+$') { throw 'Version must be vMAJOR.MINOR.PATCH.' }
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 $pubspecVersion = (Select-String -Path (Join-Path $root 'pubspec.yaml') -Pattern '^version:\s*([0-9]+\.[0-9]+\.[0-9]+)(?:\+.*)?$').Matches.Groups[1].Value
@@ -72,6 +73,9 @@ try {
   $zip = Join-Path $release 'docu-windows-x64.zip'
   Compress-Archive -Path (Join-Path $bundle '*') -DestinationPath $zip
   $iscc = Join-Path "${env:ProgramFiles(x86)}" 'Inno Setup 6\ISCC.exe'
+  if (-not (Test-Path -LiteralPath $iscc)) {
+    $iscc = Join-Path $env:LOCALAPPDATA 'Programs\Inno Setup 6\ISCC.exe'
+  }
   if (-not (Test-Path -LiteralPath $iscc)) { throw 'ISCC.exe not found.' }
   & $iscc "/DMyAppVersion=$($Version.Substring(1))" (Join-Path $PSScriptRoot 'docu.iss')
   if ($LASTEXITCODE -ne 0) { throw 'Installer build failed.' }

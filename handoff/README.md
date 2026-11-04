@@ -16,6 +16,7 @@ another: apply the complete ZIP when transferring these changes elsewhere.
 - [Pubspec, Android Gradle, and manifest: complete files](07-configuration.md)
 - [All source files and assets in a ZIP](docu-feature-updates.zip)
 - [Exact resolved packages, versions, and license notices](DEPENDENCIES.md)
+- [PDF page cropping and Windows icon integration](08-pdf-page-crop.md)
 - [Bundle file list](FILES.txt)
 
 ## Build and validation

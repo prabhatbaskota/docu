@@ -15,6 +15,7 @@ import 'documents/actions.dart';
 import 'documents/document.dart';
 import 'documents/document_screen.dart';
 import 'page_card.dart';
+import 'page_crop_screen.dart';
 import 'page_picker_screen.dart';
 import 'pickers.dart';
 import 'scan_flow.dart';
@@ -62,6 +63,7 @@ class _PageEditorState extends State<PageEditor> {
   final Map<String, PdfDocument> _docs = {};
   final List<_Pg> _pages = [];
   final Set<int> _sel = {};
+  final Set<String> _cropFiles = {};
   int _nextId = 0;
   bool _loading = true;
   bool _busy = false;
@@ -103,6 +105,9 @@ class _PageEditorState extends State<PageEditor> {
       d.dispose();
     }
     super.dispose();
+    for (final path in _cropFiles) {
+      File(path).delete().ignore();
+    }
   }
 
   Future<void> _ensureDocs(List<PageRef> refs) async {
@@ -143,6 +148,49 @@ class _PageEditorState extends State<PageEditor> {
         _sel.clear();
         _dirty = true;
       });
+
+  Future<void> _crop() async {
+    final at = _pages.indexWhere((pg) => _sel.contains(pg.id));
+    if (at < 0 || _sel.length != 1) return;
+    final pg = _pages[at];
+    final area = await Navigator.of(context).push<Rect>(MaterialPageRoute(
+      builder: (_) =>
+          PageCropScreen(document: _docs[pg.ref.src]!, index: pg.ref.index),
+    ));
+    if (area == null || !mounted || area == const Rect.fromLTWH(0, 0, 1, 1)) {
+      return;
+    }
+    setState(() => _busy = true);
+    try {
+      final tmp = await tempPdfPath();
+      _cropFiles.add(tmp);
+      await PdfrxEngine().cropPage(pg.ref, area, tmp);
+      if (!mounted) {
+        File(tmp).delete().ignore();
+        return;
+      }
+      final ref = PageRef(tmp, 0);
+      await _ensureDocs([ref]);
+      if (!mounted) return;
+      _labels[tmp] =
+          _labels[pg.ref.src] ?? p.basenameWithoutExtension(pg.ref.src);
+      setState(() {
+        final currentIndex = _pages.indexWhere((item) => item.id == pg.id);
+        if (currentIndex < 0) return;
+        _pages[currentIndex] = _Pg(ref, pg.id);
+        _dirty = true;
+      });
+      toast(context, 'Page cropped', actionLabel: 'Undo', onAction: () {
+        if (!mounted) return;
+        final index = _pages.indexWhere((item) => item.id == pg.id);
+        if (index >= 0) setState(() => _pages[index] = pg);
+      });
+    } catch (e) {
+      if (mounted) _toast(friendlyError(e));
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
 
   // ---------- adding / replacing ----------
 
@@ -397,7 +445,7 @@ class _PageEditorState extends State<PageEditor> {
           ? null
           : await askQuality(context, originalBytes: _estimateBytes(refs));
       if (r.quality != null && q == null) return;
-      if(!mounted)return;
+      if (!mounted) return;
       if (q != null) {
         final before = _estimateBytes(refs);
         if (!mounted) return;
@@ -666,6 +714,7 @@ class _PageEditorState extends State<PageEditor> {
                     _action(Icons.delete_outline, 'Delete', _delete),
                     _action(Icons.file_download_outlined, 'Extract', _extract),
                     if (one) ...[
+                      _action(Icons.crop, 'Crop', _crop),
                       _action(Icons.swap_horiz, 'Replace',
                           () => _addPages(replace: true)),
                       _action(Icons.add, 'Insert after',

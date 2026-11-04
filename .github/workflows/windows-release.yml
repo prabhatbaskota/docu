@@ -43,6 +43,8 @@ jobs:
           Set-Content $path $cmake -NoNewline
           flutter pub get --enforce-lockfile
           if ($LASTEXITCODE -ne 0) { throw 'Locked dependency resolution failed' }
+          dart run packaging/windows/make_icon.dart
+          if ($LASTEXITCODE -ne 0) { throw 'Branded icon generation failed' }
           flutter analyze --no-pub
           if ($LASTEXITCODE -ne 0) { throw 'Analysis failed' }
           flutter test --no-pub

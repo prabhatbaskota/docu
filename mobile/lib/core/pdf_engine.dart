@@ -3,7 +3,7 @@ import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart' show compute;
-import 'package:flutter/painting.dart' show decodeImageFromList;
+import 'package:flutter/painting.dart' show decodeImageFromList, Rect;
 import 'package:image/image.dart' as img;
 import 'package:path/path.dart' as p;
 import 'package:pdf/pdf.dart' as pdflib;
@@ -86,6 +86,61 @@ Uint8List _encodeJpg((Uint8List, int, int, int) a) {
 }
 
 class PdfrxEngine implements PdfEngine {
+  /// Rasterize only the retained area, so excluded content is not embedded.
+  Future<void> cropPage(PageRef ref, Rect crop, String outPath) async {
+    if (!crop.left.isFinite ||
+        !crop.top.isFinite ||
+        !crop.right.isFinite ||
+        !crop.bottom.isFinite ||
+        crop.left < 0 ||
+        crop.top < 0 ||
+        crop.right > 1 ||
+        crop.bottom > 1 ||
+        crop.width < .02 ||
+        crop.height < .02) {
+      throw const FormatException('Select a larger area within the page.');
+    }
+    final doc = await PdfDocument.openFile(ref.src);
+    try {
+      final page = doc.pages[ref.index];
+      final scale =
+          math.min(300 / 72, 4000 / math.max(page.width, page.height));
+      final fullWidth = (page.width * scale).round();
+      final fullHeight = (page.height * scale).round();
+      final x = (crop.left * fullWidth).round();
+      final y = (crop.top * fullHeight).round();
+      final image = await page.render(
+          x: x,
+          y: y,
+          width: math.max(1, (crop.right * fullWidth).round() - x),
+          height: math.max(1, (crop.bottom * fullHeight).round() - y),
+          fullWidth: fullWidth.toDouble(),
+          fullHeight: fullHeight.toDouble());
+      if (image == null) {
+        throw StateError('Could not render the selected area.');
+      }
+      late Uint8List png;
+      try {
+        png = await compute(_encodeCrop,
+            (Uint8List.fromList(image.pixels), image.width, image.height));
+      } finally {
+        image.dispose();
+      }
+      final out = pw.Document();
+      out.addPage(pw.Page(
+        pageFormat: pdflib.PdfPageFormat(
+            page.width * crop.width, page.height * crop.height),
+        margin: pw.EdgeInsets.zero,
+        build: (_) => pw.FullPage(
+            ignoreMargins: true,
+            child: pw.Image(pw.MemoryImage(png), fit: pw.BoxFit.fill)),
+      ));
+      await File(outPath).writeAsBytes(await out.save(), flush: true);
+    } finally {
+      doc.dispose();
+    }
+  }
+
   @override
   Future<int> pageCount(String path) async {
     final doc = await PdfDocument.openFile(path);
@@ -252,6 +307,15 @@ class PdfrxEngine implements PdfEngine {
 }
 
 final PdfEngine engine = PdfrxEngine();
+
+Uint8List _encodeCrop((Uint8List, int, int) data) =>
+    img.encodePng(img.Image.fromBytes(
+      width: data.$2,
+      height: data.$3,
+      bytes: data.$1.buffer,
+      numChannels: 4,
+      order: img.ChannelOrder.bgra,
+    ));
 
 String friendlyError(Object e) {
   if (e is CompressionCancelled) return 'Compression cancelled. Original kept.';
