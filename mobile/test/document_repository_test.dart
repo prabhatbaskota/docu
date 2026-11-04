@@ -130,7 +130,9 @@ void main() {
       expect(row['title'], 'Existing');
       expect(row['compressed'], 0);
       expect(row['folder_id'], isNull);
-      expect(await upgraded.getVersion(), 3);
+      expect(await upgraded.getVersion(), 4);
+      expect(row['ocr_status'], '');
+      expect(await upgraded.query('ocr_pages'), isEmpty);
     } finally {
       await upgraded.close();
     }

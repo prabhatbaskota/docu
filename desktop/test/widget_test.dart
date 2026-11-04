@@ -16,7 +16,7 @@ void main() {
   databaseFactory = databaseFactoryFfi;
 
   testWidgets(
-      'Already compressed document skips compression and quality picker',
+      'Compressed document can choose a new target and cancel without changes',
       (tester) async {
     late Database db;
     late Directory dir;
@@ -46,13 +46,14 @@ void main() {
         await repo.list(const DocQuery());
       });
       await tester.pumpAndSettle();
-      expect(
-          find.text(
-              'This file is already compressed. No new copy was created.'),
-          findsOneWidget);
-      expect(find.text('Balanced'), findsNothing);
+      expect(find.text('Optimal (recommended)'), findsOneWidget);
+      expect(find.text('Target size'), findsOneWidget);
+      await tester.tapAt(const Offset(5, 5));
+      await tester.pumpAndSettle();
       await tester.runAsync(() async {
         expect((await repo.list(const DocQuery())).length, 1);
+        expect(await File(repo.pathOf(doc)).readAsBytes(),
+            [37, 80, 68, 70, 45, 49, 46, 55]);
       });
       expect(tester.takeException(), isNull);
     } finally {
