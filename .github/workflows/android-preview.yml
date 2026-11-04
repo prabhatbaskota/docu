@@ -1,0 +1,57 @@
+name: Android preview APK
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    defaults:
+      run:
+        working-directory: mobile
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2
+        with:
+          channel: stable
+          flutter-version: '3.47.2'
+          cache: false
+      - name: Configure Android native tools
+        run: |
+          echo "JAVA_HOME=${JAVA_HOME_17_X64:?Java 17 is required}" >> "$GITHUB_ENV"
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" 'platforms;android-36' 'build-tools;36.0.0' 'ndk;28.2.13676358' 'cmake;3.22.1'
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/28.2.13676358" >> "$GITHUB_ENV"
+          echo "$ANDROID_HOME/cmake/3.22.1/bin" >> "$GITHUB_PATH"
+      - name: Resolve and analyze
+        run: |
+          flutter pub get --enforce-lockfile
+          flutter analyze --no-pub
+      - name: Verify core regressions
+        working-directory: verification
+        run: |
+          flutter pub get --enforce-lockfile
+          flutter test --no-pub --concurrency=1
+      - name: Build preview
+        run: flutter build apk --debug --no-pub
+      - name: Verify signature and export
+        run: |
+          apk=build/app/outputs/flutter-apk/app-debug.apk
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose "$apk"
+          version=$(sed -n 's/^version: *\([^+ ]*\).*/\1/p' pubspec.yaml)
+          test -n "$version"
+          mkdir -p release
+          name="DOCU-Android-universal-v${version}-features-debug.apk"
+          cp "$apk" "release/$name"
+          (cd release && sha256sum "$name" > "$name.sha256")
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: docu-android-preview
+          path: mobile/release/*
+          if-no-files-found: error
+          retention-days: 30
