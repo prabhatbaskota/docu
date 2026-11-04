@@ -12,7 +12,7 @@ import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart' show compute;
-import 'package:flutter/painting.dart' show decodeImageFromList;
+import 'package:flutter/painting.dart' show decodeImageFromList, Rect;
 import 'package:image/image.dart' as img;
 import 'package:path/path.dart' as p;
 import 'package:pdf/pdf.dart' as pdflib;
@@ -95,6 +95,61 @@ Uint8List _encodeJpg((Uint8List, int, int, int) a) {
 }
 
 class PdfrxEngine implements PdfEngine {
+  /// Rasterize only the retained area, so excluded content is not embedded.
+  Future<void> cropPage(PageRef ref, Rect crop, String outPath) async {
+    if (!crop.left.isFinite ||
+        !crop.top.isFinite ||
+        !crop.right.isFinite ||
+        !crop.bottom.isFinite ||
+        crop.left < 0 ||
+        crop.top < 0 ||
+        crop.right > 1 ||
+        crop.bottom > 1 ||
+        crop.width < .02 ||
+        crop.height < .02) {
+      throw const FormatException('Select a larger area within the page.');
+    }
+    final doc = await PdfDocument.openFile(ref.src);
+    try {
+      final page = doc.pages[ref.index];
+      final scale =
+          math.min(300 / 72, 4000 / math.max(page.width, page.height));
+      final fullWidth = (page.width * scale).round();
+      final fullHeight = (page.height * scale).round();
+      final x = (crop.left * fullWidth).round();
+      final y = (crop.top * fullHeight).round();
+      final image = await page.render(
+          x: x,
+          y: y,
+          width: math.max(1, (crop.right * fullWidth).round() - x),
+          height: math.max(1, (crop.bottom * fullHeight).round() - y),
+          fullWidth: fullWidth.toDouble(),
+          fullHeight: fullHeight.toDouble());
+      if (image == null) {
+        throw StateError('Could not render the selected area.');
+      }
+      late Uint8List png;
+      try {
+        png = await compute(_encodeCrop,
+            (Uint8List.fromList(image.pixels), image.width, image.height));
+      } finally {
+        image.dispose();
+      }
+      final out = pw.Document();
+      out.addPage(pw.Page(
+        pageFormat: pdflib.PdfPageFormat(
+            page.width * crop.width, page.height * crop.height),
+        margin: pw.EdgeInsets.zero,
+        build: (_) => pw.FullPage(
+            ignoreMargins: true,
+            child: pw.Image(pw.MemoryImage(png), fit: pw.BoxFit.fill)),
+      ));
+      await File(outPath).writeAsBytes(await out.save(), flush: true);
+    } finally {
+      doc.dispose();
+    }
+  }
+
   @override
   Future<int> pageCount(String path) async {
     final doc = await PdfDocument.openFile(path);
@@ -261,6 +316,15 @@ class PdfrxEngine implements PdfEngine {
 }
 
 final PdfEngine engine = PdfrxEngine();
+
+Uint8List _encodeCrop((Uint8List, int, int) data) =>
+    img.encodePng(img.Image.fromBytes(
+      width: data.$2,
+      height: data.$3,
+      bytes: data.$1.buffer,
+      numChannels: 4,
+      order: img.ChannelOrder.bgra,
+    ));
 
 String friendlyError(Object e) {
   if (e is CompressionCancelled) return 'Compression cancelled. Original kept.';
@@ -581,6 +645,7 @@ import 'documents/actions.dart';
 import 'documents/document.dart';
 import 'documents/document_screen.dart';
 import 'page_card.dart';
+import 'page_crop_screen.dart';
 import 'page_picker_screen.dart';
 import 'pickers.dart';
 import 'scan_flow.dart';
@@ -620,6 +685,7 @@ class _PageEditorState extends State<PageEditor> {
   final Map<String, PdfDocument> _docs = {};
   final List<_Pg> _pages = [];
   final Set<int> _sel = {};
+  final Set<String> _cropFiles = {};
   int _nextId = 0;
   bool _loading = true;
   bool _busy = false;
@@ -661,6 +727,9 @@ class _PageEditorState extends State<PageEditor> {
       d.dispose();
     }
     super.dispose();
+    for (final path in _cropFiles) {
+      File(path).delete().ignore();
+    }
   }
 
   Future<void> _ensureDocs(List<PageRef> refs) async {
@@ -701,6 +770,49 @@ class _PageEditorState extends State<PageEditor> {
         _sel.clear();
         _dirty = true;
       });
+
+  Future<void> _crop() async {
+    final at = _pages.indexWhere((pg) => _sel.contains(pg.id));
+    if (at < 0 || _sel.length != 1) return;
+    final pg = _pages[at];
+    final area = await Navigator.of(context).push<Rect>(MaterialPageRoute(
+      builder: (_) =>
+          PageCropScreen(document: _docs[pg.ref.src]!, index: pg.ref.index),
+    ));
+    if (area == null || !mounted || area == const Rect.fromLTWH(0, 0, 1, 1)) {
+      return;
+    }
+    setState(() => _busy = true);
+    try {
+      final tmp = await tempPdfPath();
+      _cropFiles.add(tmp);
+      await PdfrxEngine().cropPage(pg.ref, area, tmp);
+      if (!mounted) {
+        File(tmp).delete().ignore();
+        return;
+      }
+      final ref = PageRef(tmp, 0);
+      await _ensureDocs([ref]);
+      if (!mounted) return;
+      _labels[tmp] =
+          _labels[pg.ref.src] ?? p.basenameWithoutExtension(pg.ref.src);
+      setState(() {
+        final currentIndex = _pages.indexWhere((item) => item.id == pg.id);
+        if (currentIndex < 0) return;
+        _pages[currentIndex] = _Pg(ref, pg.id);
+        _dirty = true;
+      });
+      toast(context, 'Page cropped', actionLabel: 'Undo', onAction: () {
+        if (!mounted) return;
+        final index = _pages.indexWhere((item) => item.id == pg.id);
+        if (index >= 0) setState(() => _pages[index] = pg);
+      });
+    } catch (e) {
+      if (mounted) _toast(friendlyError(e));
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
 
   // ---------- adding / replacing ----------
 
@@ -955,7 +1067,7 @@ class _PageEditorState extends State<PageEditor> {
           ? null
           : await askQuality(context, originalBytes: _estimateBytes(refs));
       if (r.quality != null && q == null) return;
-      if(!mounted)return;
+      if (!mounted) return;
       if (q != null) {
         final before = _estimateBytes(refs);
         if (!mounted) return;
@@ -1218,6 +1330,7 @@ class _PageEditorState extends State<PageEditor> {
                     _action(Icons.delete_outline, 'Delete', _delete),
                     _action(Icons.file_download_outlined, 'Extract', _extract),
                     if (one) ...[
+                      _action(Icons.crop, 'Crop', _crop),
                       _action(Icons.swap_horiz, 'Replace',
                           () => _addPages(replace: true)),
                       _action(Icons.add, 'Insert after',
@@ -1352,7 +1465,7 @@ import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart' show compute;
-import 'package:flutter/painting.dart' show decodeImageFromList;
+import 'package:flutter/painting.dart' show decodeImageFromList, Rect;
 import 'package:image/image.dart' as img;
 import 'package:path/path.dart' as p;
 import 'package:pdf/pdf.dart' as pdflib;
@@ -1435,6 +1548,61 @@ Uint8List _encodeJpg((Uint8List, int, int, int) a) {
 }
 
 class PdfrxEngine implements PdfEngine {
+  /// Rasterize only the retained area, so excluded content is not embedded.
+  Future<void> cropPage(PageRef ref, Rect crop, String outPath) async {
+    if (!crop.left.isFinite ||
+        !crop.top.isFinite ||
+        !crop.right.isFinite ||
+        !crop.bottom.isFinite ||
+        crop.left < 0 ||
+        crop.top < 0 ||
+        crop.right > 1 ||
+        crop.bottom > 1 ||
+        crop.width < .02 ||
+        crop.height < .02) {
+      throw const FormatException('Select a larger area within the page.');
+    }
+    final doc = await PdfDocument.openFile(ref.src);
+    try {
+      final page = doc.pages[ref.index];
+      final scale =
+          math.min(300 / 72, 4000 / math.max(page.width, page.height));
+      final fullWidth = (page.width * scale).round();
+      final fullHeight = (page.height * scale).round();
+      final x = (crop.left * fullWidth).round();
+      final y = (crop.top * fullHeight).round();
+      final image = await page.render(
+          x: x,
+          y: y,
+          width: math.max(1, (crop.right * fullWidth).round() - x),
+          height: math.max(1, (crop.bottom * fullHeight).round() - y),
+          fullWidth: fullWidth.toDouble(),
+          fullHeight: fullHeight.toDouble());
+      if (image == null) {
+        throw StateError('Could not render the selected area.');
+      }
+      late Uint8List png;
+      try {
+        png = await compute(_encodeCrop,
+            (Uint8List.fromList(image.pixels), image.width, image.height));
+      } finally {
+        image.dispose();
+      }
+      final out = pw.Document();
+      out.addPage(pw.Page(
+        pageFormat: pdflib.PdfPageFormat(
+            page.width * crop.width, page.height * crop.height),
+        margin: pw.EdgeInsets.zero,
+        build: (_) => pw.FullPage(
+            ignoreMargins: true,
+            child: pw.Image(pw.MemoryImage(png), fit: pw.BoxFit.fill)),
+      ));
+      await File(outPath).writeAsBytes(await out.save(), flush: true);
+    } finally {
+      doc.dispose();
+    }
+  }
+
   @override
   Future<int> pageCount(String path) async {
     final doc = await PdfDocument.openFile(path);
@@ -1601,6 +1769,15 @@ class PdfrxEngine implements PdfEngine {
 }
 
 final PdfEngine engine = PdfrxEngine();
+
+Uint8List _encodeCrop((Uint8List, int, int) data) =>
+    img.encodePng(img.Image.fromBytes(
+      width: data.$2,
+      height: data.$3,
+      bytes: data.$1.buffer,
+      numChannels: 4,
+      order: img.ChannelOrder.bgra,
+    ));
 
 String friendlyError(Object e) {
   if (e is CompressionCancelled) return 'Compression cancelled. Original kept.';
@@ -1921,6 +2098,7 @@ import 'documents/actions.dart';
 import 'documents/document.dart';
 import 'documents/document_screen.dart';
 import 'page_card.dart';
+import 'page_crop_screen.dart';
 import 'page_picker_screen.dart';
 import 'pickers.dart';
 import 'scan_flow.dart';
@@ -1968,6 +2146,7 @@ class _PageEditorState extends State<PageEditor> {
   final Map<String, PdfDocument> _docs = {};
   final List<_Pg> _pages = [];
   final Set<int> _sel = {};
+  final Set<String> _cropFiles = {};
   int _nextId = 0;
   bool _loading = true;
   bool _busy = false;
@@ -2009,6 +2188,9 @@ class _PageEditorState extends State<PageEditor> {
       d.dispose();
     }
     super.dispose();
+    for (final path in _cropFiles) {
+      File(path).delete().ignore();
+    }
   }
 
   Future<void> _ensureDocs(List<PageRef> refs) async {
@@ -2049,6 +2231,49 @@ class _PageEditorState extends State<PageEditor> {
         _sel.clear();
         _dirty = true;
       });
+
+  Future<void> _crop() async {
+    final at = _pages.indexWhere((pg) => _sel.contains(pg.id));
+    if (at < 0 || _sel.length != 1) return;
+    final pg = _pages[at];
+    final area = await Navigator.of(context).push<Rect>(MaterialPageRoute(
+      builder: (_) =>
+          PageCropScreen(document: _docs[pg.ref.src]!, index: pg.ref.index),
+    ));
+    if (area == null || !mounted || area == const Rect.fromLTWH(0, 0, 1, 1)) {
+      return;
+    }
+    setState(() => _busy = true);
+    try {
+      final tmp = await tempPdfPath();
+      _cropFiles.add(tmp);
+      await PdfrxEngine().cropPage(pg.ref, area, tmp);
+      if (!mounted) {
+        File(tmp).delete().ignore();
+        return;
+      }
+      final ref = PageRef(tmp, 0);
+      await _ensureDocs([ref]);
+      if (!mounted) return;
+      _labels[tmp] =
+          _labels[pg.ref.src] ?? p.basenameWithoutExtension(pg.ref.src);
+      setState(() {
+        final currentIndex = _pages.indexWhere((item) => item.id == pg.id);
+        if (currentIndex < 0) return;
+        _pages[currentIndex] = _Pg(ref, pg.id);
+        _dirty = true;
+      });
+      toast(context, 'Page cropped', actionLabel: 'Undo', onAction: () {
+        if (!mounted) return;
+        final index = _pages.indexWhere((item) => item.id == pg.id);
+        if (index >= 0) setState(() => _pages[index] = pg);
+      });
+    } catch (e) {
+      if (mounted) _toast(friendlyError(e));
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
 
   // ---------- adding / replacing ----------
 
@@ -2303,7 +2528,7 @@ class _PageEditorState extends State<PageEditor> {
           ? null
           : await askQuality(context, originalBytes: _estimateBytes(refs));
       if (r.quality != null && q == null) return;
-      if(!mounted)return;
+      if (!mounted) return;
       if (q != null) {
         final before = _estimateBytes(refs);
         if (!mounted) return;
@@ -2572,6 +2797,7 @@ class _PageEditorState extends State<PageEditor> {
                     _action(Icons.delete_outline, 'Delete', _delete),
                     _action(Icons.file_download_outlined, 'Extract', _extract),
                     if (one) ...[
+                      _action(Icons.crop, 'Crop', _crop),
                       _action(Icons.swap_horiz, 'Replace',
                           () => _addPages(replace: true)),
                       _action(Icons.add, 'Insert after',
@@ -2703,5 +2929,203 @@ class _PageEditorState extends State<PageEditor> {
       ),
     );
   }
+}
+```
+
+## `mobile/lib/features/page_crop_screen.dart`
+
+```dart
+import 'package:flutter/material.dart';
+import 'package:pdfrx/pdfrx.dart';
+
+/// Select a rectangle in displayed page coordinates, normalized to 0..1.
+class PageCropScreen extends StatefulWidget {
+  final PdfDocument document;
+  final int index;
+  const PageCropScreen(
+      {super.key, required this.document, required this.index});
+
+  @override
+  State<PageCropScreen> createState() => _PageCropScreenState();
+}
+
+class _PageCropScreenState extends State<PageCropScreen> {
+  Rect _crop = const Rect.fromLTWH(0, 0, 1, 1);
+  Offset? _start;
+
+  @override
+  Widget build(BuildContext context) {
+    final page = widget.document.pages[widget.index];
+    return Scaffold(
+      appBar: AppBar(title: const Text('Crop page'), actions: [
+        TextButton(
+            onPressed: () =>
+                setState(() => _crop = const Rect.fromLTWH(0, 0, 1, 1)),
+            child: const Text('Reset')),
+        TextButton(
+            onPressed: _crop.width >= .02 && _crop.height >= .02
+                ? () => Navigator.pop(context, _crop)
+                : null,
+            child: const Text('Apply')),
+      ]),
+      body: Column(children: [
+        const Padding(
+          padding: EdgeInsets.all(16),
+          child: Text(
+              'Drag across the page to select the area to keep. Apply replaces this page in your edit. The cropped page becomes an image; text selection and links are lost.'),
+        ),
+        Expanded(
+            child: Padding(
+          padding: const EdgeInsets.all(20),
+          child: Center(
+              child: AspectRatio(
+            aspectRatio: page.width / page.height,
+            child: LayoutBuilder(builder: (context, constraints) {
+              Offset normalized(Offset p) => Offset(
+                  (p.dx / constraints.maxWidth).clamp(0, 1),
+                  (p.dy / constraints.maxHeight).clamp(0, 1));
+              return GestureDetector(
+                onPanStart: (d) => _start = normalized(d.localPosition),
+                onPanUpdate: (d) => setState(() => _crop =
+                    Rect.fromPoints(_start!, normalized(d.localPosition))),
+                child: Stack(fit: StackFit.expand, children: [
+                  PdfPageView(
+                      document: widget.document, pageNumber: widget.index + 1),
+                  CustomPaint(
+                      painter: _CropPainter(
+                          _crop, Theme.of(context).colorScheme.primary)),
+                ]),
+              );
+            }),
+          )),
+        )),
+      ]),
+    );
+  }
+}
+
+class _CropPainter extends CustomPainter {
+  final Rect crop;
+  final Color color;
+  _CropPainter(this.crop, this.color);
+  @override
+  void paint(Canvas canvas, Size size) {
+    final rect = Rect.fromLTRB(crop.left * size.width, crop.top * size.height,
+        crop.right * size.width, crop.bottom * size.height);
+    final mask = Path()
+      ..fillType = PathFillType.evenOdd
+      ..addRect(Offset.zero & size)
+      ..addRect(rect);
+    canvas.drawPath(mask, Paint()..color = Colors.black54);
+    canvas.drawRect(
+        rect,
+        Paint()
+          ..color = color
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 3);
+  }
+
+  @override
+  bool shouldRepaint(_CropPainter oldDelegate) =>
+      oldDelegate.crop != crop || oldDelegate.color != color;
+}
+```
+
+## `desktop/lib/features/page_crop_screen.dart`
+
+```dart
+import 'package:flutter/material.dart';
+import 'package:pdfrx/pdfrx.dart';
+
+/// Select a rectangle in displayed page coordinates, normalized to 0..1.
+class PageCropScreen extends StatefulWidget {
+  final PdfDocument document;
+  final int index;
+  const PageCropScreen(
+      {super.key, required this.document, required this.index});
+
+  @override
+  State<PageCropScreen> createState() => _PageCropScreenState();
+}
+
+class _PageCropScreenState extends State<PageCropScreen> {
+  Rect _crop = const Rect.fromLTWH(0, 0, 1, 1);
+  Offset? _start;
+
+  @override
+  Widget build(BuildContext context) {
+    final page = widget.document.pages[widget.index];
+    return Scaffold(
+      appBar: AppBar(title: const Text('Crop page'), actions: [
+        TextButton(
+            onPressed: () =>
+                setState(() => _crop = const Rect.fromLTWH(0, 0, 1, 1)),
+            child: const Text('Reset')),
+        TextButton(
+            onPressed: _crop.width >= .02 && _crop.height >= .02
+                ? () => Navigator.pop(context, _crop)
+                : null,
+            child: const Text('Apply')),
+      ]),
+      body: Column(children: [
+        const Padding(
+          padding: EdgeInsets.all(16),
+          child: Text(
+              'Drag across the page to select the area to keep. Apply replaces this page in your edit. The cropped page becomes an image; text selection and links are lost.'),
+        ),
+        Expanded(
+            child: Padding(
+          padding: const EdgeInsets.all(20),
+          child: Center(
+              child: AspectRatio(
+            aspectRatio: page.width / page.height,
+            child: LayoutBuilder(builder: (context, constraints) {
+              Offset normalized(Offset p) => Offset(
+                  (p.dx / constraints.maxWidth).clamp(0, 1),
+                  (p.dy / constraints.maxHeight).clamp(0, 1));
+              return GestureDetector(
+                onPanStart: (d) => _start = normalized(d.localPosition),
+                onPanUpdate: (d) => setState(() => _crop =
+                    Rect.fromPoints(_start!, normalized(d.localPosition))),
+                child: Stack(fit: StackFit.expand, children: [
+                  PdfPageView(
+                      document: widget.document, pageNumber: widget.index + 1),
+                  CustomPaint(
+                      painter: _CropPainter(
+                          _crop, Theme.of(context).colorScheme.primary)),
+                ]),
+              );
+            }),
+          )),
+        )),
+      ]),
+    );
+  }
+}
+
+class _CropPainter extends CustomPainter {
+  final Rect crop;
+  final Color color;
+  _CropPainter(this.crop, this.color);
+  @override
+  void paint(Canvas canvas, Size size) {
+    final rect = Rect.fromLTRB(crop.left * size.width, crop.top * size.height,
+        crop.right * size.width, crop.bottom * size.height);
+    final mask = Path()
+      ..fillType = PathFillType.evenOdd
+      ..addRect(Offset.zero & size)
+      ..addRect(rect);
+    canvas.drawPath(mask, Paint()..color = Colors.black54);
+    canvas.drawRect(
+        rect,
+        Paint()
+          ..color = color
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 3);
+  }
+
+  @override
+  bool shouldRepaint(_CropPainter oldDelegate) =>
+      oldDelegate.crop != crop || oldDelegate.color != color;
 }
 ```

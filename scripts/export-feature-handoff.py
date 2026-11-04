@@ -21,6 +21,10 @@ all_files=set()
 groups['07-configuration'] += ['mobile/ios/Podfile', 'mobile/ios/Flutter/Debug.xcconfig', 'mobile/ios/Flutter/Release.xcconfig', 'mobile/ios/Flutter/AppFrameworkInfo.plist', 'mobile/ios/Runner.xcodeproj/project.pbxproj', 'mobile/README.md', 'desktop/README.md', 'scripts/build-android-apk.ps1', 'scripts/ANDROID-BUILD.md']
 all_files.add('verification/.gitignore')
 groups['02-sequential-correction'] += [f'{app}/lib/core/scan_cleanup.dart' for app in ['mobile', 'desktop']]
+groups['04-compression'] += [f'{app}/lib/features/page_crop_screen.dart' for app in ['mobile', 'desktop']]
+groups['06-desktop-icon'] += ['desktop/packaging/windows/build-release.ps1']
+groups['07-configuration'] += ['.github/workflows/windows-release.yml', '.github/workflows/android-preview.yml']
+groups['07-configuration'] += [f'{app}/test/{name}' for app in ['mobile', 'desktop'] for name in ['document_repository_test.dart', 'widget_test.dart']]
 for group,files in groups.items():
     sections=[f'# {group}\n\nComplete final integrated files. Apply the bundle as a whole; shared imports cross feature boundaries.\n\nSee [test steps and limits](README.md).\n']
     for name in files:

@@ -21,6 +21,16 @@ another: apply the complete ZIP when transferring these changes elsewhere.
 
 ## Build and validation
 
+**2026-11-04 update:** the Android universal preview APK was successfully built,
+its APK v2 signature and SHA-256 were verified, and it was copied to the connected
+phone's Downloads folder. It includes the new PDF page crop feature. Both apps
+passed analysis, all 20 portable regressions passed on Windows and Linux, and
+the [Windows candidate build](https://github.com/prabhatbaskota/docu/actions/runs/41919720066)
+passed all 39 desktop tests and generated the installer and ZIP. The crop screen,
+Windows app/document/installer icons, test setup, and build instructions are
+included in the refreshed source bundle. Older dated build blockers below are
+historical; physical camera and installed desktop runtime checks remain manual.
+
 Use Flutter 3.38 or newer (Dart 3.10+). OpenCV 2.2.2 uses native build hooks.
 Its modules are limited to imgproc and imgcodecs and two build workers.
 Android builds need the Android NDK, CMake and Ninja; on this machine CMake

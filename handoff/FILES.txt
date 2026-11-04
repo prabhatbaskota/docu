@@ -1,3 +1,5 @@
+.github/workflows/android-preview.yml
+.github/workflows/windows-release.yml
 desktop/README.md
 desktop/analysis_options.yaml
 desktop/assets/fonts/NotoSans-Regular.ttf
@@ -18,6 +20,7 @@ desktop/lib/features/documents/document_card.dart
 desktop/lib/features/documents/document_repository.dart
 desktop/lib/features/documents/document_screen.dart
 desktop/lib/features/documents/ocr_actions.dart
+desktop/lib/features/page_crop_screen.dart
 desktop/lib/features/page_editor.dart
 desktop/lib/features/scan/card_scan_screen.dart
 desktop/lib/features/scan/edge_correction_screen.dart
@@ -27,12 +30,15 @@ desktop/lib/features/scan/scan_review_screen.dart
 desktop/lib/features/scan_flow.dart
 desktop/lib/features/settings/settings_page.dart
 desktop/lib/main.dart
+desktop/packaging/windows/build-release.ps1
 desktop/packaging/windows/docu.iss
 desktop/packaging/windows/make_icon.dart
 desktop/pubspec.lock
 desktop/pubspec.yaml
+desktop/test/document_repository_test.dart
 desktop/test/ocr_repository_test.dart
 desktop/test/scan_regression_test.dart
+desktop/test/widget_test.dart
 desktop/windows/CMakeLists.txt
 desktop/windows/runner/resources/app_icon.ico
 desktop/windows/runner/resources/document_icon.ico
@@ -63,6 +69,7 @@ mobile/lib/features/documents/document_card.dart
 mobile/lib/features/documents/document_repository.dart
 mobile/lib/features/documents/document_screen.dart
 mobile/lib/features/documents/ocr_actions.dart
+mobile/lib/features/page_crop_screen.dart
 mobile/lib/features/page_editor.dart
 mobile/lib/features/scan/card_scan_screen.dart
 mobile/lib/features/scan/edge_correction_screen.dart
@@ -73,8 +80,10 @@ mobile/lib/features/settings/settings_page.dart
 mobile/lib/main.dart
 mobile/pubspec.lock
 mobile/pubspec.yaml
+mobile/test/document_repository_test.dart
 mobile/test/ocr_repository_test.dart
 mobile/test/scan_regression_test.dart
+mobile/test/widget_test.dart
 scripts/ANDROID-BUILD.md
 scripts/build-android-apk.ps1
 verification/.gitignore
@@ -85,6 +94,8 @@ verification/test/desktop_ocr_repository_test.dart
 verification/test/desktop_scan_regression_test.dart
 verification/test/mobile_ocr_repository_test.dart
 verification/test/mobile_scan_regression_test.dart
+verification/test/pdf_crop_test.dart
 verification/test/pdf_merge_test.dart
+verification/test/pdfium_test_support.dart
 verification/test/scan_cleanup_test.dart
 verification/test/searchable_pdf_test.dart

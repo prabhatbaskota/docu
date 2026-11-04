@@ -3254,7 +3254,32 @@ local preview, not a Google Play release. Release signing and application ID
 configuration are documented in `mobile/PLAY_RELEASE.md`. The helper expects
 `flutter pub get` to have resolved dependencies before building.
 
-## Current handoff state (2026-10-31)
+## Completed preview (2026-11-04)
+
+The universal debug APK was built and exported successfully, including the scan
+features and PDF page cropping:
+
+`release/DOCU-Android-universal-v0.1.2-features-debug.apk`
+
+Its APK v2 signature was verified with Android build-tools. The archive contains
+ARMv7, ARM64 and x86-64 native libraries, plus the crop screen in the compiled
+Flutter application. Its SHA-256 is:
+
+```text
+94ac31e0a3861ff59e812e47a8a1a7ebf015a4a9ded4d050bbb6c0d8a223d1c8
+```
+
+Both apps passed analysis and all 20 portable regression tests passed on Windows.
+The same 20 tests also passed on the hosted Linux runner after explicitly locating
+the host PDFium library downloaded by its build hook. Physical Android testing
+is still required. This is a debug preview, not a Google Play release.
+
+The Android preview workflow in `.github/workflows/android-preview.yml` provides
+an alternative hosted build with signature and checksum verification. It runs
+for relevant feature-branch pushes and supports manual dispatch after merging
+the workflow into the repository's default branch.
+
+## Previous handoff state (2026-10-31)
 
 The build was stopped at the user's request so it could be moved to another
 machine. No new feature APK was exported. Existing October 16 APKs in
@@ -3272,4 +3297,1232 @@ physical-device checks remain to be completed on the next machine.
 heap. Heavy concurrent Java indexing caused memory paging on the original
 8 GB machine. The helper's PowerShell parsing and SDK discovery (`-PrepareOnly`)
 passed; its complete build/export path awaits a successful APK build.
+```
+
+## `.github/workflows/windows-release.yml`
+
+```yml
+name: Windows release candidate
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-2022
+    defaults:
+      run:
+        working-directory: desktop
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
+        with:
+          channel: stable
+          flutter-version: '3.47.2'
+          cache: false
+      - name: Generate Windows platform and build clean bundle
+        shell: pwsh
+        run: |
+          flutter clean
+          if ($LASTEXITCODE -ne 0) { throw 'Clean failed' }
+          flutter create --platforms=windows --project-name docapp --no-pub .
+          if ($LASTEXITCODE -ne 0) { throw 'Platform generation failed' }
+          # flutter create replaces the tracked lockfile with its template lockfile.
+          git restore --source=HEAD -- pubspec.lock
+          if ($LASTEXITCODE -ne 0) { throw 'Could not restore the committed lockfile' }
+          $path = 'windows/CMakeLists.txt'
+          $cmake = Get-Content $path -Raw
+          $pluginInclude = 'include(flutter/generated_plugins.cmake)'
+          if (-not $cmake.Contains($pluginInclude)) { throw 'Flutter plugin include not found.' }
+          $compatibilityDefine = 'add_compile_definitions(_SILENCE_EXPERIMENTAL_COROUTINE_DEPRECATION_WARNINGS)'
+          $cmake = $cmake.Replace($pluginInclude, "$compatibilityDefine`n$pluginInclude")
+          Set-Content $path $cmake -NoNewline
+          flutter pub get --enforce-lockfile
+          if ($LASTEXITCODE -ne 0) { throw 'Locked dependency resolution failed' }
+          dart run packaging/windows/make_icon.dart
+          if ($LASTEXITCODE -ne 0) { throw 'Branded icon generation failed' }
+          flutter analyze --no-pub
+          if ($LASTEXITCODE -ne 0) { throw 'Analysis failed' }
+          flutter test --no-pub
+          if ($LASTEXITCODE -ne 0) { throw 'Tests failed' }
+          flutter build windows --release --no-pub
+          if ($LASTEXITCODE -ne 0) { throw 'Build failed' }
+      - name: Install pinned Inno Setup
+        shell: pwsh
+        run: |
+          choco install innosetup --version=6.5.4 --allow-downgrade --no-progress -y
+          if ($LASTEXITCODE -ne 0) { throw 'Inno Setup install failed' }
+      - name: Package and hash release candidate
+        shell: pwsh
+        env:
+          DOCU_REF_TYPE: ${{ github.ref_type }}
+          DOCU_REF_NAME: ${{ github.ref_name }}
+          DOCU_SIGNING_PFX_BASE64: ${{ secrets.DOCU_SIGNING_PFX_BASE64 }}
+          DOCU_SIGNING_PFX_PASSWORD: ${{ secrets.DOCU_SIGNING_PFX_PASSWORD }}
+        run: |
+          if ($env:DOCU_REF_TYPE -eq 'tag') {
+            $version = $env:DOCU_REF_NAME
+          } else {
+            $pubspec = Select-String -Path pubspec.yaml -Pattern '^version:\s*([0-9]+\.[0-9]+\.[0-9]+)(?:\+.*)?$'
+            if (-not $pubspec) { throw 'pubspec version not found.' }
+            $version = 'v' + $pubspec.Matches.Groups[1].Value
+          }
+          .\packaging\windows\build-release.ps1 -Version $version
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: docu-windows-release-candidate
+          path: desktop/release/*
+          if-no-files-found: error
+          retention-days: 30
+```
+
+## `.github/workflows/android-preview.yml`
+
+```yml
+name: Android preview APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - 'feature/**'
+    paths:
+      - 'mobile/**'
+      - 'verification/**'
+      - '.github/workflows/android-preview.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    defaults:
+      run:
+        working-directory: mobile
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2
+        with:
+          channel: stable
+          flutter-version: '3.47.2'
+          cache: false
+      - name: Configure Android native tools
+        run: |
+          echo "JAVA_HOME=${JAVA_HOME_17_X64:?Java 17 is required}" >> "$GITHUB_ENV"
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" 'platforms;android-36' 'build-tools;36.0.0' 'ndk;28.2.13676358' 'cmake;3.22.1'
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/28.2.13676358" >> "$GITHUB_ENV"
+          echo "$ANDROID_HOME/cmake/3.22.1/bin" >> "$GITHUB_PATH"
+      - name: Resolve and analyze
+        run: |
+          flutter pub get --enforce-lockfile
+          flutter analyze --no-pub
+      - name: Verify core regressions
+        working-directory: verification
+        run: |
+          flutter pub get --enforce-lockfile
+          flutter test --no-pub --concurrency=1
+      - name: Build preview
+        run: flutter build apk --debug --no-pub
+      - name: Verify signature and export
+        run: |
+          apk=build/app/outputs/flutter-apk/app-debug.apk
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose "$apk"
+          version=$(sed -n 's/^version: *\([^+ ]*\).*/\1/p' pubspec.yaml)
+          test -n "$version"
+          mkdir -p release
+          name="DOCU-Android-universal-v${version}-features-debug.apk"
+          cp "$apk" "release/$name"
+          (cd release && sha256sum "$name" > "$name.sha256")
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: docu-android-preview
+          path: mobile/release/*
+          if-no-files-found: error
+          retention-days: 30
+```
+
+## `mobile/test/document_repository_test.dart`
+
+```dart
+import 'dart:io';
+
+import 'package:docapp/core/database.dart';
+import 'package:docapp/features/documents/document.dart';
+import 'package:docapp/features/documents/document_repository.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:sqflite_common_ffi/sqflite_ffi.dart';
+
+void main() {
+  sqfliteFfiInit();
+  databaseFactory = databaseFactoryFfi;
+
+  late Database db;
+  late Directory libDir;
+  late Directory srcDir;
+  late DocumentRepository repo;
+
+  File makeSrc(String name, {int bytes = 10}) => File('${srcDir.path}/$name')
+    ..writeAsBytesSync([
+      0x25,
+      0x50,
+      0x44,
+      0x46,
+      0x2d,
+      0x31,
+      0x2e,
+      0x37,
+      ...List.filled(bytes - 8, 1),
+    ]);
+
+  setUp(() async {
+    db = await AppDatabase.open(inMemoryDatabasePath);
+    libDir = Directory.systemTemp.createTempSync('docapp_lib_');
+    srcDir = Directory.systemTemp.createTempSync('docapp_src_');
+    repo = DocumentRepository(db: db, dir: libDir, pageCounter: (_) async => 3);
+  });
+
+  tearDown(() async {
+    await repo.dispose();
+    await db.close();
+    libDir.deleteSync(recursive: true);
+    srcDir.deleteSync(recursive: true);
+  });
+
+  test('addFile moves the file into the library and records metadata',
+      () async {
+    final src = makeSrc('a.pdf', bytes: 42);
+    final d = await repo.addFile(src.path, title: 'Invoice');
+    expect(d.title, 'Invoice');
+    expect(d.pageCount, 3);
+    expect(d.sizeBytes, 42);
+    expect(File(repo.pathOf(d)).existsSync(), isTrue);
+    expect(src.existsSync(), isFalse);
+  });
+
+  test('addFile with move:false keeps the source', () async {
+    final src = makeSrc('a.pdf');
+    await repo.addFile(src.path, title: 'x.pdf', move: false);
+    expect(src.existsSync(), isTrue);
+    final all = await repo.list(const DocQuery());
+    expect(all.single.title, 'x'); // ".pdf" stripped
+  });
+
+  test('rejects a renamed non-PDF without adding it to the library', () async {
+    final src = File('${srcDir.path}/bad.pdf')..writeAsStringSync('not a PDF');
+    await expectLater(
+      repo.addFile(src.path, title: 'Bad', move: false),
+      throwsFormatException,
+    );
+    expect(await repo.list(const DocQuery()), isEmpty);
+    expect(src.existsSync(), isTrue);
+  });
+
+  test('invalid replacement preserves the original PDF', () async {
+    final doc = await repo.addFile(makeSrc('original.pdf').path, title: 'Good');
+    final before = File(repo.pathOf(doc)).readAsBytesSync();
+    final bad = File('${srcDir.path}/bad.pdf')..writeAsStringSync('not a PDF');
+    await expectLater(
+        repo.replaceFile(doc.id, bad.path), throwsFormatException);
+    expect(File(repo.pathOf(doc)).readAsBytesSync(), before);
+    expect((await repo.get(doc.id))!.pageCount, doc.pageCount);
+  });
+
+  test('rejects a PDF that the parser cannot open', () async {
+    final rejecting = DocumentRepository(
+      db: db,
+      dir: libDir,
+      pageCounter: (_) async => throw const FormatException('broken'),
+    );
+    try {
+      final src = makeSrc('broken.pdf');
+      await expectLater(
+        rejecting.addFile(src.path, title: 'Broken', move: false),
+        throwsFormatException,
+      );
+      expect(await repo.list(const DocQuery()), isEmpty);
+    } finally {
+      await rejecting.dispose();
+    }
+  });
+
+  test(
+      'compression status survives rename and duplicate, and resets on replacement',
+      () async {
+    final doc = await repo.addFile(makeSrc('compressed.pdf').path,
+        title: 'Compressed', compressed: true);
+    await repo.rename(doc.id, 'Renamed');
+    expect((await repo.get(doc.id))!.compressed, isTrue);
+    final copy = await repo.duplicate(doc.id);
+    expect((await repo.get(copy.id))!.compressed, isTrue);
+    final replaced = await repo.replaceFile(doc.id, makeSrc('new.pdf').path);
+    expect(replaced.compressed, isFalse);
+    final compressed = await repo.replaceFile(doc.id, makeSrc('small.pdf').path,
+        compressed: true);
+    expect(compressed.compressed, isTrue);
+  });
+
+  test('version 1 database upgrade preserves existing documents', () async {
+    final path = '${srcDir.path}/legacy.db';
+    final legacy =
+        await openDatabase(path, version: 1, onCreate: (db, _) async {
+      await db
+          .execute('CREATE TABLE documents (id TEXT PRIMARY KEY, title TEXT)');
+      await db.insert('documents', {'id': 'old', 'title': 'Existing'});
+    });
+    await legacy.close();
+    final upgraded = await AppDatabase.open(path);
+    try {
+      final row = (await upgraded.query('documents')).single;
+      expect(row['title'], 'Existing');
+      expect(row['compressed'], 0);
+      expect(row['folder_id'], isNull);
+      expect(await upgraded.getVersion(), 4);
+      expect(row['ocr_status'], '');
+      expect(await upgraded.query('ocr_pages'), isEmpty);
+    } finally {
+      await upgraded.close();
+    }
+  });
+
+  test('rename changes the title only', () async {
+    final d = await repo.addFile(makeSrc('a.pdf').path, title: 'Old');
+    await repo.rename(d.id, '  New name  ');
+    final got = await repo.get(d.id);
+    expect(got!.title, 'New name');
+    expect(got.fileName, d.fileName);
+  });
+
+  test('duplicate creates an independent copy', () async {
+    final d = await repo.addFile(makeSrc('a.pdf').path, title: 'Report');
+    final copy = await repo.duplicate(d.id);
+    expect(copy.id, isNot(d.id));
+    expect(copy.title, 'Report copy');
+    expect(File(repo.pathOf(copy)).existsSync(), isTrue);
+    expect(File(repo.pathOf(d)).existsSync(), isTrue);
+  });
+
+  test('folders organize PDFs without deleting them', () async {
+    final folder = await repo.createFolder('Receipts');
+    final doc = await repo.addFile(makeSrc('receipt.pdf').path,
+        title: 'Receipt', folderId: folder.id);
+    expect((await repo.get(doc.id))!.folderId, folder.id);
+    final copy = await repo.duplicate(doc.id);
+    expect(copy.folderId, folder.id);
+    await repo.renameFolder(folder.id, 'Taxes');
+    expect((await repo.folders()).single.name, 'Taxes');
+    await repo.moveToFolder([copy.id], null);
+    expect((await repo.get(copy.id))!.folderId, isNull);
+    await repo.deleteFolder(folder.id);
+    expect((await repo.get(doc.id))!.folderId, isNull);
+    expect(File(repo.pathOf(doc)).existsSync(), isTrue);
+  });
+
+  test('favorites filter', () async {
+    final a = await repo.addFile(makeSrc('a.pdf').path, title: 'A');
+    await repo.addFile(makeSrc('b.pdf').path, title: 'B');
+    await repo.setFavorite(a.id, true);
+    final favs = await repo.list(const DocQuery(favoritesOnly: true));
+    expect(favs.map((d) => d.title), ['A']);
+  });
+
+  test('search treats % and _ literally', () async {
+    await repo.addFile(makeSrc('a.pdf').path, title: 'Tax 100%');
+    await repo.addFile(makeSrc('b.pdf').path, title: 'Tax 1000');
+    final r = await repo.list(const DocQuery(text: '100%'));
+    expect(r.map((d) => d.title), ['Tax 100%']);
+  });
+
+  test('sorting by name (case-insensitive) and size', () async {
+    await repo.addFile(makeSrc('1.pdf', bytes: 10).path, title: 'banana');
+    await repo.addFile(makeSrc('2.pdf', bytes: 99).path, title: 'Apple');
+    await repo.addFile(makeSrc('3.pdf', bytes: 50).path, title: 'cherry');
+    final byName = await repo.list(const DocQuery(sort: SortMode.name));
+    expect(byName.map((d) => d.title), ['Apple', 'banana', 'cherry']);
+    final bySize = await repo.list(const DocQuery(sort: SortMode.size));
+    expect(bySize.map((d) => d.title), ['Apple', 'cherry', 'banana']);
+  });
+
+  test('soft delete hides, restore brings back, purge removes the file',
+      () async {
+    final d = await repo.addFile(makeSrc('a.pdf').path, title: 'A');
+    await repo.softDelete([d.id]);
+    expect(await repo.list(const DocQuery()), isEmpty);
+    expect(await repo.get(d.id), isNull);
+
+    await repo.restore([d.id]);
+    expect((await repo.list(const DocQuery())).length, 1);
+
+    await repo.softDelete([d.id]);
+    await repo.purge([d.id]);
+    expect(File(repo.pathOf(d)).existsSync(), isFalse);
+    expect(await db.query('documents'), isEmpty);
+  });
+
+  test('purge never removes documents that are not in the trash', () async {
+    final d = await repo.addFile(makeSrc('a.pdf').path, title: 'A');
+    await repo.purge([d.id]);
+    expect(File(repo.pathOf(d)).existsSync(), isTrue);
+    expect((await repo.list(const DocQuery())).length, 1);
+  });
+
+  test('purgeDeleted cleans leftovers from the trash', () async {
+    final d = await repo.addFile(makeSrc('a.pdf').path, title: 'A');
+    await repo.softDelete([d.id]);
+    await repo.purgeDeleted();
+    expect(File(repo.pathOf(d)).existsSync(), isFalse);
+  });
+
+  test('replaceFile updates size, page count and modified time', () async {
+    final d = await repo.addFile(makeSrc('a.pdf', bytes: 10).path, title: 'A');
+    await Future<void>.delayed(const Duration(milliseconds: 5));
+    final updated =
+        await repo.replaceFile(d.id, makeSrc('b.pdf', bytes: 77).path);
+    expect(updated.sizeBytes, 77);
+    expect(updated.id, d.id);
+    expect(updated.updatedAt.isAfter(d.updatedAt), isTrue);
+  });
+
+  test('syncFromDisk adopts untracked PDFs exactly once', () async {
+    File('${libDir.path}/Old scan.pdf')
+        .writeAsBytesSync([0x25, 0x50, 0x44, 0x46, 0x2d, 0x31, 0x2e, 0x37]);
+    File('${libDir.path}/notes.txt').writeAsStringSync('ignore me');
+    expect(await repo.syncFromDisk(), 1);
+    final all = await repo.list(const DocQuery());
+    expect(all.single.title, 'Old scan');
+    expect(File(repo.pathOf(all.single)).existsSync(), isTrue);
+    expect(await repo.syncFromDisk(), 0);
+  });
+
+  test('changes stream fires after a mutation', () async {
+    final events = <void>[];
+    final sub = repo.changes.listen(events.add);
+    await repo.addFile(makeSrc('a.pdf').path, title: 'A');
+    await Future<void>.delayed(Duration.zero);
+    expect(events, isNotEmpty);
+    await sub.cancel();
+  });
+
+  test('list honors a limit (used for Recent on Home)', () async {
+    for (var i = 0; i < 4; i++) {
+      await repo.addFile(makeSrc('$i.pdf').path, title: 'Doc $i');
+    }
+    final r = await repo.list(const DocQuery(), limit: 2);
+    expect(r.length, 2);
+  });
+}
+```
+
+## `mobile/test/widget_test.dart`
+
+```dart
+import 'dart:io';
+
+import 'package:docapp/core/database.dart';
+import 'package:docapp/features/compress/compress_flow.dart';
+import 'package:docapp/features/documents/document.dart';
+import 'package:docapp/features/documents/document_repository.dart';
+import 'package:docapp/features/documents/providers.dart';
+import 'package:docapp/features/tools_page.dart';
+import 'package:docapp/main.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:sqflite_common_ffi/sqflite_ffi.dart';
+
+void main() {
+  sqfliteFfiInit();
+  databaseFactory = databaseFactoryFfi;
+
+  testWidgets(
+      'Compressed document can choose a new target and cancel without changes',
+      (tester) async {
+    late Database db;
+    late Directory dir;
+    late DocumentRepository repo;
+    late Document doc;
+    await tester.runAsync(() async {
+      db = await AppDatabase.open(inMemoryDatabasePath);
+      dir = await Directory.systemTemp.createTemp('docapp_compress_');
+      repo = DocumentRepository(db: db, dir: dir, pageCounter: (_) async => 1);
+      final source = File('${dir.path}/source.pdf');
+      await source.writeAsBytes([37, 80, 68, 70, 45, 49, 46, 55]);
+      doc = await repo.addFile(source.path,
+          title: 'Already small', compressed: true);
+    });
+    try {
+      await tester.pumpWidget(ProviderScope(
+        overrides: [repositoryProvider.overrideWithValue(repo)],
+        child: MaterialApp(home: Scaffold(body: Builder(builder: (context) {
+          return TextButton(
+            onPressed: () => compressDocument(context, doc),
+            child: const Text('Try compression'),
+          );
+        }))),
+      ));
+      await tester.tap(find.text('Try compression'));
+      await tester.runAsync(() async {
+        await repo.list(const DocQuery());
+      });
+      await tester.pumpAndSettle();
+      expect(find.text('Optimal (recommended)'), findsOneWidget);
+      expect(find.text('Target size'), findsOneWidget);
+      await tester.tapAt(const Offset(5, 5));
+      await tester.pumpAndSettle();
+      await tester.runAsync(() async {
+        expect((await repo.list(const DocQuery())).length, 1);
+        expect(await File(repo.pathOf(doc)).readAsBytes(),
+            [37, 80, 68, 70, 45, 49, 46, 55]);
+      });
+      expect(tester.takeException(), isNull);
+    } finally {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.runAsync(() async {
+        await repo.dispose();
+        await db.close();
+        await dir.delete(recursive: true);
+      });
+    }
+  });
+
+  testWidgets('Mobile shell opens Scan and exposes Home, Tools, and Favorites',
+      (tester) async {
+    late Database db;
+    late Directory dir;
+    await tester.runAsync(() async {
+      db = await AppDatabase.open(inMemoryDatabasePath);
+      dir = await Directory.systemTemp.createTemp('docapp_widget_');
+    });
+    final repo = DocumentRepository(
+      db: db,
+      dir: dir,
+      pageCounter: (_) async => 1,
+    );
+
+    try {
+      await tester.pumpWidget(ProviderScope(
+        overrides: [
+          repositoryProvider.overrideWithValue(repo),
+          settingsStoreProvider.overrideWithValue(SettingsStore(db)),
+        ],
+        child: const MaterialApp(home: Shell()),
+      ));
+      await tester.runAsync(() async {
+        await repo.list(const DocQuery());
+      });
+      await tester.pumpAndSettle();
+
+      expect(find.text('Scan a document'), findsOneWidget);
+      expect(find.text('Start scanning'), findsOneWidget);
+      await tester.tap(find.widgetWithText(NavigationDestination, 'Home'));
+      await tester.pumpAndSettle();
+      expect(find.text('docu'), findsOneWidget);
+      expect(find.text('Nothing here yet'), findsOneWidget);
+      await tester.tap(find.widgetWithText(NavigationDestination, 'Tools'));
+      await tester.pumpAndSettle();
+      expect(find.text('Edit pages'), findsOneWidget);
+      expect(find.text('Merge'), findsOneWidget);
+      expect(find.text('Compress'), findsOneWidget);
+      expect(find.text('Photos to PDF'), findsOneWidget);
+      expect(find.text('Import PDF'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+
+      await tester.tap(find.text('Favorites'));
+      await tester.pumpAndSettle();
+      expect(find.text('No favorites yet'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    } finally {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.runAsync(() async {
+        await repo.dispose();
+        await db.close();
+        await dir.delete(recursive: true);
+      });
+    }
+  });
+
+  testWidgets('Desktop library renders folder navigation', (tester) async {
+    late Database db;
+    late Directory dir;
+    await tester.runAsync(() async {
+      db = await AppDatabase.open(inMemoryDatabasePath);
+      dir = await Directory.systemTemp.createTemp('docapp_desktop_');
+    });
+    final repo = DocumentRepository(
+      db: db,
+      dir: dir,
+      pageCounter: (_) async => 1,
+    );
+
+    try {
+      await tester.pumpWidget(ProviderScope(
+        overrides: [
+          repositoryProvider.overrideWithValue(repo),
+          settingsStoreProvider.overrideWithValue(SettingsStore(db)),
+        ],
+        child: const DocApp(),
+      ));
+      await tester.runAsync(() async {
+        await repo.list(const DocQuery());
+        await repo.folders();
+      });
+      await tester.pumpAndSettle();
+      expect(find.text('All documents'), findsWidgets);
+      expect(find.text('Unfiled'), findsOneWidget);
+      expect(find.byTooltip('New folder'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    } finally {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.runAsync(() async {
+        await repo.dispose();
+        await db.close();
+        await dir.delete(recursive: true);
+      });
+    }
+  });
+
+  testWidgets('Merge tool selects library PDFs before choosing merge mode',
+      (tester) async {
+    late Database db;
+    late Directory dir;
+    late DocumentRepository repo;
+    await tester.runAsync(() async {
+      db = await AppDatabase.open(inMemoryDatabasePath);
+      dir = await Directory.systemTemp.createTemp('docapp_merge_');
+      repo = DocumentRepository(db: db, dir: dir, pageCounter: (_) async => 1);
+      for (final title in ['Invoice', 'Receipt']) {
+        final source = File('${dir.path}/$title.pdf');
+        await source.writeAsBytes([37, 80, 68, 70, 45, 49, 46, 55]);
+        await repo.addFile(source.path, title: title);
+      }
+    });
+
+    try {
+      await tester.pumpWidget(ProviderScope(
+        overrides: [
+          repositoryProvider.overrideWithValue(repo),
+          settingsStoreProvider.overrideWithValue(SettingsStore(db)),
+        ],
+        child: MaterialApp(home: Scaffold(body: Builder(builder: (context) {
+          return TextButton(
+            onPressed: () =>
+                tools.firstWhere((tool) => tool.name == 'Merge').run(context),
+            child: const Text('Merge'),
+          );
+        }))),
+      ));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Merge'));
+      await tester.runAsync(() async {
+        await repo.list(const DocQuery());
+      });
+      await tester.pumpAndSettle();
+
+      expect(find.text('Merge PDFs'), findsOneWidget);
+      expect(find.text('Browse files...'), findsOneWidget);
+      expect(find.text('Invoice'), findsOneWidget);
+      expect(find.text('Receipt'), findsOneWidget);
+      expect(
+          tester
+              .widget<FilledButton>(
+                  find.widgetWithText(FilledButton, 'Continue (0)'))
+              .onPressed,
+          isNull);
+
+      await tester.tap(find.text('Receipt'));
+      await tester.pump();
+      expect(
+          tester
+              .widget<FilledButton>(
+                  find.widgetWithText(FilledButton, 'Continue (1)'))
+              .onPressed,
+          isNull);
+      await tester.tap(find.text('Invoice'));
+      await tester.pump();
+      await tester.tap(find.text('Continue (2)'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Compress and merge'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    } finally {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.runAsync(() async {
+        await repo.dispose();
+        await db.close();
+        await dir.delete(recursive: true);
+      });
+    }
+  });
+}
+```
+
+## `desktop/test/document_repository_test.dart`
+
+```dart
+import 'dart:io';
+
+import 'package:docapp/core/database.dart';
+import 'package:docapp/features/documents/document.dart';
+import 'package:docapp/features/documents/document_repository.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:path/path.dart' as p;
+import 'package:sqflite_common_ffi/sqflite_ffi.dart';
+
+void main() {
+  sqfliteFfiInit();
+  databaseFactory = databaseFactoryFfi;
+
+  late Database db;
+  late Directory libDir;
+  late Directory srcDir;
+  late DocumentRepository repo;
+
+  File makeSrc(String name, {int bytes = 10}) => File('${srcDir.path}/$name')
+    ..writeAsBytesSync([
+      0x25,
+      0x50,
+      0x44,
+      0x46,
+      0x2d,
+      0x31,
+      0x2e,
+      0x37,
+      ...List.filled(bytes - 8, 1),
+    ]);
+
+  setUp(() async {
+    db = await AppDatabase.open(inMemoryDatabasePath);
+    libDir = Directory.systemTemp.createTempSync('docapp_lib_');
+    srcDir = Directory.systemTemp.createTempSync('docapp_src_');
+    repo = DocumentRepository(db: db, dir: libDir, pageCounter: (_) async => 3);
+  });
+
+  tearDown(() async {
+    await repo.dispose();
+    await db.close();
+    libDir.deleteSync(recursive: true);
+    srcDir.deleteSync(recursive: true);
+  });
+
+  test('addFile moves the file into the library and records metadata',
+      () async {
+    final src = makeSrc('a.pdf', bytes: 42);
+    final d = await repo.addFile(src.path, title: 'Invoice');
+    expect(d.title, 'Invoice');
+    expect(d.pageCount, 3);
+    expect(d.sizeBytes, 42);
+    expect(File(repo.pathOf(d)).existsSync(), isTrue);
+    expect(src.existsSync(), isFalse);
+  });
+
+  test('addFile with move:false keeps the source', () async {
+    final src = makeSrc('a.pdf');
+    await repo.addFile(src.path, title: 'x.pdf', move: false);
+    expect(src.existsSync(), isTrue);
+    final all = await repo.list(const DocQuery());
+    expect(all.single.title, 'x'); // ".pdf" stripped
+  });
+
+  test('rejects a renamed non-PDF without adding it to the library', () async {
+    final src = File('${srcDir.path}/bad.pdf')..writeAsStringSync('not a PDF');
+    await expectLater(
+      repo.addFile(src.path, title: 'Bad', move: false),
+      throwsFormatException,
+    );
+    expect(await repo.list(const DocQuery()), isEmpty);
+    expect(src.existsSync(), isTrue);
+  });
+
+  test('invalid replacement preserves the original PDF', () async {
+    final doc = await repo.addFile(makeSrc('original.pdf').path, title: 'Good');
+    final before = File(repo.pathOf(doc)).readAsBytesSync();
+    final bad = File('${srcDir.path}/bad.pdf')..writeAsStringSync('not a PDF');
+    await expectLater(
+        repo.replaceFile(doc.id, bad.path), throwsFormatException);
+    expect(File(repo.pathOf(doc)).readAsBytesSync(), before);
+    expect((await repo.get(doc.id))!.pageCount, doc.pageCount);
+  });
+
+  test('rejects a PDF that the parser cannot open', () async {
+    final rejecting = DocumentRepository(
+      db: db,
+      dir: libDir,
+      pageCounter: (_) async => throw const FormatException('broken'),
+    );
+    try {
+      final src = makeSrc('broken.pdf');
+      await expectLater(
+        rejecting.addFile(src.path, title: 'Broken', move: false),
+        throwsFormatException,
+      );
+      expect(await repo.list(const DocQuery()), isEmpty);
+    } finally {
+      await rejecting.dispose();
+    }
+  });
+
+  test(
+      'compression status survives rename and duplicate, and resets on replacement',
+      () async {
+    final doc = await repo.addFile(makeSrc('compressed.pdf').path,
+        title: 'Compressed', compressed: true);
+    await repo.rename(doc.id, 'Renamed');
+    expect((await repo.get(doc.id))!.compressed, isTrue);
+    final copy = await repo.duplicate(doc.id);
+    expect((await repo.get(copy.id))!.compressed, isTrue);
+    final replaced = await repo.replaceFile(doc.id, makeSrc('new.pdf').path);
+    expect(replaced.compressed, isFalse);
+    final compressed = await repo.replaceFile(doc.id, makeSrc('small.pdf').path,
+        compressed: true);
+    expect(compressed.compressed, isTrue);
+  });
+
+  test('version 1 database upgrade preserves existing documents', () async {
+    final path = '${srcDir.path}/legacy.db';
+    final legacy =
+        await openDatabase(path, version: 1, onCreate: (db, _) async {
+      await db
+          .execute('CREATE TABLE documents (id TEXT PRIMARY KEY, title TEXT)');
+      await db.insert('documents', {'id': 'old', 'title': 'Existing'});
+    });
+    await legacy.close();
+    final upgraded = await AppDatabase.open(path);
+    try {
+      final row = (await upgraded.query('documents')).single;
+      expect(row['title'], 'Existing');
+      expect(row['compressed'], 0);
+      expect(row['folder_id'], isNull);
+      expect(await upgraded.getVersion(), 5);
+      expect(row['ocr_status'], '');
+      expect(await upgraded.query('ocr_pages'), isEmpty);
+      expect(await upgraded.query('recent_files'), isEmpty);
+    } finally {
+      await upgraded.close();
+    }
+  });
+
+  test('rename changes the title only', () async {
+    final d = await repo.addFile(makeSrc('a.pdf').path, title: 'Old');
+    await repo.rename(d.id, '  New name  ');
+    final got = await repo.get(d.id);
+    expect(got!.title, 'New name');
+    expect(got.fileName, d.fileName);
+  });
+
+  test('duplicate creates an independent copy', () async {
+    final d = await repo.addFile(makeSrc('a.pdf').path, title: 'Report');
+    final copy = await repo.duplicate(d.id);
+    expect(copy.id, isNot(d.id));
+    expect(copy.title, 'Report copy');
+    expect(File(repo.pathOf(copy)).existsSync(), isTrue);
+    expect(File(repo.pathOf(d)).existsSync(), isTrue);
+  });
+
+  test('folders organize PDFs without deleting them', () async {
+    final folder = await repo.createFolder('Receipts');
+    final doc = await repo.addFile(makeSrc('receipt.pdf').path,
+        title: 'Receipt', folderId: folder.id);
+    expect((await repo.get(doc.id))!.folderId, folder.id);
+    final copy = await repo.duplicate(doc.id);
+    expect(copy.folderId, folder.id);
+    await repo.renameFolder(folder.id, 'Taxes');
+    expect((await repo.folders()).single.name, 'Taxes');
+    await repo.moveToFolder([copy.id], null);
+    expect((await repo.get(copy.id))!.folderId, isNull);
+    await repo.deleteFolder(folder.id);
+    expect((await repo.get(doc.id))!.folderId, isNull);
+    expect(File(repo.pathOf(doc)).existsSync(), isTrue);
+  });
+
+  test('favorites filter', () async {
+    final a = await repo.addFile(makeSrc('a.pdf').path, title: 'A');
+    await repo.addFile(makeSrc('b.pdf').path, title: 'B');
+    await repo.setFavorite(a.id, true);
+    final favs = await repo.list(const DocQuery(favoritesOnly: true));
+    expect(favs.map((d) => d.title), ['A']);
+  });
+
+  test('search treats % and _ literally', () async {
+    await repo.addFile(makeSrc('a.pdf').path, title: 'Tax 100%');
+    await repo.addFile(makeSrc('b.pdf').path, title: 'Tax 1000');
+    final r = await repo.list(const DocQuery(text: '100%'));
+    expect(r.map((d) => d.title), ['Tax 100%']);
+  });
+
+  test('sorting by name (case-insensitive) and size', () async {
+    await repo.addFile(makeSrc('1.pdf', bytes: 10).path, title: 'banana');
+    await repo.addFile(makeSrc('2.pdf', bytes: 99).path, title: 'Apple');
+    await repo.addFile(makeSrc('3.pdf', bytes: 50).path, title: 'cherry');
+    final byName = await repo.list(const DocQuery(sort: SortMode.name));
+    expect(byName.map((d) => d.title), ['Apple', 'banana', 'cherry']);
+    final bySize = await repo.list(const DocQuery(sort: SortMode.size));
+    expect(bySize.map((d) => d.title), ['Apple', 'cherry', 'banana']);
+  });
+
+  test('soft delete hides, restore brings back, purge removes the file',
+      () async {
+    final d = await repo.addFile(makeSrc('a.pdf').path, title: 'A');
+    await repo.softDelete([d.id]);
+    expect(await repo.list(const DocQuery()), isEmpty);
+    expect(await repo.get(d.id), isNull);
+
+    await repo.restore([d.id]);
+    expect((await repo.list(const DocQuery())).length, 1);
+
+    await repo.softDelete([d.id]);
+    await repo.purge([d.id]);
+    expect(File(repo.pathOf(d)).existsSync(), isFalse);
+    expect(await db.query('documents'), isEmpty);
+  });
+
+  test('purge never removes documents that are not in the trash', () async {
+    final d = await repo.addFile(makeSrc('a.pdf').path, title: 'A');
+    await repo.purge([d.id]);
+    expect(File(repo.pathOf(d)).existsSync(), isTrue);
+    expect((await repo.list(const DocQuery())).length, 1);
+  });
+
+  test('purgeDeleted cleans leftovers from the trash', () async {
+    final d = await repo.addFile(makeSrc('a.pdf').path, title: 'A');
+    await repo.softDelete([d.id]);
+    await repo.purgeDeleted();
+    expect(File(repo.pathOf(d)).existsSync(), isFalse);
+  });
+
+  test('replaceFile updates size, page count and modified time', () async {
+    final d = await repo.addFile(makeSrc('a.pdf', bytes: 10).path, title: 'A');
+    await Future<void>.delayed(const Duration(milliseconds: 5));
+    final updated =
+        await repo.replaceFile(d.id, makeSrc('b.pdf', bytes: 77).path);
+    expect(updated.sizeBytes, 77);
+    expect(updated.id, d.id);
+    expect(updated.updatedAt.isAfter(d.updatedAt), isTrue);
+  });
+
+  test('syncFromDisk adopts untracked PDFs exactly once', () async {
+    File('${libDir.path}/Old scan.pdf')
+        .writeAsBytesSync([0x25, 0x50, 0x44, 0x46, 0x2d, 0x31, 0x2e, 0x37]);
+    File('${libDir.path}/notes.txt').writeAsStringSync('ignore me');
+    expect(await repo.syncFromDisk(), 1);
+    final all = await repo.list(const DocQuery());
+    expect(all.single.title, 'Old scan');
+    expect(File(repo.pathOf(all.single)).existsSync(), isTrue);
+    expect(await repo.syncFromDisk(), 0);
+  });
+
+  test('changes stream fires after a mutation', () async {
+    final events = <void>[];
+    final sub = repo.changes.listen(events.add);
+    await repo.addFile(makeSrc('a.pdf').path, title: 'A');
+    await Future<void>.delayed(Duration.zero);
+    expect(events, isNotEmpty);
+    await sub.cancel();
+  });
+
+  test('list honors a limit (used for Recent on Home)', () async {
+    for (var i = 0; i < 4; i++) {
+      await repo.addFile(makeSrc('$i.pdf').path, title: 'Doc $i');
+    }
+    final r = await repo.list(const DocQuery(), limit: 2);
+    expect(r.length, 2);
+  });
+
+  test('recent external PDFs persist, refresh and can be removed', () async {
+    final first = makeSrc('first.pdf');
+    final second = makeSrc('second.pdf');
+    await repo.recordRecentFile(first.path);
+    await repo.recordRecentFile(second.path);
+    await Future<void>.delayed(const Duration(milliseconds: 2));
+    await repo.recordRecentFile(first.path);
+    expect((await repo.recentFiles()).map((f) => f.path), [
+      p.normalize(p.absolute(first.path)),
+      p.normalize(p.absolute(second.path)),
+    ]);
+    expect(await db.query('recent_files'), hasLength(2));
+    await repo.removeRecentFile(first.path);
+    expect((await repo.recentFiles()).map((f) => f.path),
+        [p.normalize(p.absolute(second.path))]);
+    expect(first.existsSync(), isTrue);
+  });
+}
+```
+
+## `desktop/test/widget_test.dart`
+
+```dart
+import 'dart:io';
+
+import 'package:docapp/core/database.dart';
+import 'package:docapp/features/compress/compress_flow.dart';
+import 'package:docapp/features/documents/document.dart';
+import 'package:docapp/features/documents/document_repository.dart';
+import 'package:docapp/features/documents/providers.dart';
+import 'package:docapp/main.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:sqflite_common_ffi/sqflite_ffi.dart';
+
+void main() {
+  sqfliteFfiInit();
+  databaseFactory = databaseFactoryFfi;
+
+  testWidgets(
+      'Compressed document can choose a new target and cancel without changes',
+      (tester) async {
+    late Database db;
+    late Directory dir;
+    late DocumentRepository repo;
+    late Document doc;
+    await tester.runAsync(() async {
+      db = await AppDatabase.open(inMemoryDatabasePath);
+      dir = await Directory.systemTemp.createTemp('docapp_compress_');
+      repo = DocumentRepository(db: db, dir: dir, pageCounter: (_) async => 1);
+      final source = File('${dir.path}/source.pdf');
+      await source.writeAsBytes([37, 80, 68, 70, 45, 49, 46, 55]);
+      doc = await repo.addFile(source.path,
+          title: 'Already small', compressed: true);
+    });
+    try {
+      await tester.pumpWidget(ProviderScope(
+        overrides: [repositoryProvider.overrideWithValue(repo)],
+        child: MaterialApp(home: Scaffold(body: Builder(builder: (context) {
+          return TextButton(
+            onPressed: () => compressDocument(context, doc),
+            child: const Text('Try compression'),
+          );
+        }))),
+      ));
+      await tester.tap(find.text('Try compression'));
+      await tester.runAsync(() async {
+        await repo.list(const DocQuery());
+      });
+      await tester.pumpAndSettle();
+      expect(find.text('Optimal (recommended)'), findsOneWidget);
+      expect(find.text('Target size'), findsOneWidget);
+      await tester.tapAt(const Offset(5, 5));
+      await tester.pumpAndSettle();
+      await tester.runAsync(() async {
+        expect((await repo.list(const DocQuery())).length, 1);
+        expect(await File(repo.pathOf(doc)).readAsBytes(),
+            [37, 80, 68, 70, 45, 49, 46, 55]);
+      });
+      expect(tester.takeException(), isNull);
+    } finally {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.runAsync(() async {
+        await repo.dispose();
+        await db.close();
+        await dir.delete(recursive: true);
+      });
+    }
+  });
+
+  testWidgets('Mobile shell opens Home and switches to Favorites',
+      (tester) async {
+    late Database db;
+    late Directory dir;
+    await tester.runAsync(() async {
+      db = await AppDatabase.open(inMemoryDatabasePath);
+      dir = await Directory.systemTemp.createTemp('docapp_widget_');
+    });
+    final repo = DocumentRepository(
+      db: db,
+      dir: dir,
+      pageCounter: (_) async => 1,
+    );
+
+    try {
+      await tester.pumpWidget(ProviderScope(
+        overrides: [
+          repositoryProvider.overrideWithValue(repo),
+          settingsStoreProvider.overrideWithValue(SettingsStore(db)),
+        ],
+        child: const MaterialApp(home: Shell()),
+      ));
+      await tester.runAsync(() async {
+        await repo.list(const DocQuery());
+      });
+      await tester.pumpAndSettle();
+
+      expect(find.text('docu'), findsOneWidget);
+      expect(find.text('Nothing here yet'), findsOneWidget);
+      expect(find.byTooltip('Scan'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+
+      await tester.tap(find.text('Favorites'));
+      await tester.pumpAndSettle();
+      expect(find.text('No favorites yet'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    } finally {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.runAsync(() async {
+        await repo.dispose();
+        await db.close();
+        await dir.delete(recursive: true);
+      });
+    }
+  });
+
+  testWidgets('Desktop library renders folder navigation', (tester) async {
+    late Database db;
+    late Directory dir;
+    await tester.runAsync(() async {
+      db = await AppDatabase.open(inMemoryDatabasePath);
+      dir = await Directory.systemTemp.createTemp('docapp_desktop_');
+    });
+    final repo = DocumentRepository(
+      db: db,
+      dir: dir,
+      pageCounter: (_) async => 1,
+    );
+
+    try {
+      await tester.pumpWidget(ProviderScope(
+        overrides: [
+          repositoryProvider.overrideWithValue(repo),
+          settingsStoreProvider.overrideWithValue(SettingsStore(db)),
+        ],
+        child: const DocApp(),
+      ));
+      await tester.runAsync(() async {
+        await repo.list(const DocQuery());
+        await repo.folders();
+      });
+      await tester.pumpAndSettle();
+      expect(find.text('All documents'), findsWidgets);
+      expect(find.text('Unfiled'), findsOneWidget);
+      expect(find.byTooltip('New folder'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    } finally {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.runAsync(() async {
+        await repo.dispose();
+        await db.close();
+        await dir.delete(recursive: true);
+      });
+    }
+  });
+
+  testWidgets('Desktop opens a PDF path passed by Windows Explorer',
+      (tester) async {
+    late Database db;
+    late Directory dir;
+    await tester.runAsync(() async {
+      db = await AppDatabase.open(inMemoryDatabasePath);
+      dir = await Directory.systemTemp.createTemp('docapp_open_with_');
+    });
+    final repo = DocumentRepository(
+      db: db,
+      dir: dir,
+      pageCounter: (_) async => 1,
+    );
+
+    try {
+      await tester.pumpWidget(ProviderScope(
+        overrides: [
+          repositoryProvider.overrideWithValue(repo),
+          settingsStoreProvider.overrideWithValue(SettingsStore(db)),
+        ],
+        child: DocApp(initialPdfPath: '${dir.path}/missing.pdf'),
+      ));
+      await tester.runAsync(() async {
+        await repo.list(const DocQuery());
+        await repo.folders();
+      });
+      await tester.pumpAndSettle();
+      expect(find.text('missing.pdf'), findsOneWidget);
+      expect(find.text('PDF file not found'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    } finally {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.runAsync(() async {
+        await repo.dispose();
+        await db.close();
+        await dir.delete(recursive: true);
+      });
+    }
+  });
+
+  testWidgets('Top Merge selects library PDFs before choosing merge mode',
+      (tester) async {
+    late Database db;
+    late Directory dir;
+    late DocumentRepository repo;
+    await tester.runAsync(() async {
+      db = await AppDatabase.open(inMemoryDatabasePath);
+      dir = await Directory.systemTemp.createTemp('docapp_merge_');
+      repo = DocumentRepository(db: db, dir: dir, pageCounter: (_) async => 1);
+      for (final title in ['Invoice', 'Receipt']) {
+        final source = File('${dir.path}/$title.pdf');
+        await source.writeAsBytes([37, 80, 68, 70, 45, 49, 46, 55]);
+        await repo.addFile(source.path, title: title);
+      }
+    });
+
+    try {
+      await tester.pumpWidget(ProviderScope(
+        overrides: [
+          repositoryProvider.overrideWithValue(repo),
+          settingsStoreProvider.overrideWithValue(SettingsStore(db)),
+          // Keep Home empty so this test exercises selection rather than rendering.
+          documentsProvider.overrideWith((ref) => Stream.value(<Document>[])),
+          favoritesProvider.overrideWith((ref) => Stream.value(<Document>[])),
+        ],
+        child: const MaterialApp(home: Shell()),
+      ));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Merge'));
+      await tester.runAsync(() async {
+        await repo.list(const DocQuery());
+      });
+      await tester.pumpAndSettle();
+
+      expect(find.text('Merge PDFs'), findsOneWidget);
+      expect(find.text('Browse files...'), findsOneWidget);
+      expect(find.text('Invoice'), findsOneWidget);
+      expect(find.text('Receipt'), findsOneWidget);
+      expect(
+          tester
+              .widget<FilledButton>(
+                  find.widgetWithText(FilledButton, 'Continue (0)'))
+              .onPressed,
+          isNull);
+
+      await tester.tap(find.text('Receipt'));
+      await tester.pump();
+      expect(
+          tester
+              .widget<FilledButton>(
+                  find.widgetWithText(FilledButton, 'Continue (1)'))
+              .onPressed,
+          isNull);
+      await tester.tap(find.text('Invoice'));
+      await tester.pump();
+      await tester.tap(find.text('Continue (2)'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Compress and merge'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    } finally {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.runAsync(() async {
+        await repo.dispose();
+        await db.close();
+        await dir.delete(recursive: true);
+      });
+    }
+  });
+}
 ```

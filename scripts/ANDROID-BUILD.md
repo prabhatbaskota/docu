@@ -33,7 +33,32 @@ local preview, not a Google Play release. Release signing and application ID
 configuration are documented in `mobile/PLAY_RELEASE.md`. The helper expects
 `flutter pub get` to have resolved dependencies before building.
 
-## Current handoff state (2026-10-31)
+## Completed preview (2026-11-04)
+
+The universal debug APK was built and exported successfully, including the scan
+features and PDF page cropping:
+
+`release/DOCU-Android-universal-v0.1.2-features-debug.apk`
+
+Its APK v2 signature was verified with Android build-tools. The archive contains
+ARMv7, ARM64 and x86-64 native libraries, plus the crop screen in the compiled
+Flutter application. Its SHA-256 is:
+
+```text
+94ac31e0a3861ff59e812e47a8a1a7ebf015a4a9ded4d050bbb6c0d8a223d1c8
+```
+
+Both apps passed analysis and all 20 portable regression tests passed on Windows.
+The same 20 tests also passed on the hosted Linux runner after explicitly locating
+the host PDFium library downloaded by its build hook. Physical Android testing
+is still required. This is a debug preview, not a Google Play release.
+
+The Android preview workflow in `.github/workflows/android-preview.yml` provides
+an alternative hosted build with signature and checksum verification. It runs
+for relevant feature-branch pushes and supports manual dispatch after merging
+the workflow into the repository's default branch.
+
+## Previous handoff state (2026-10-31)
 
 The build was stopped at the user's request so it could be moved to another
 machine. No new feature APK was exported. Existing October 16 APKs in

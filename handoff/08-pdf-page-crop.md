@@ -25,3 +25,22 @@ also uses the app ICO and displays the installed executable icon in the
 uninstall entry. Windows shows the registered document icon when the user
 selects docu as the default PDF application; the installer does not override
 that preference.
+
+## Build results (2026-11-04)
+
+- Android universal debug APK: `release/DOCU-Android-universal-v0.1.2-features-debug.apk`.
+  Android build-tools verified its signature. The local and phone copies have
+  SHA-256 `94ac31e0a3861ff59e812e47a8a1a7ebf015a4a9ded4d050bbb6c0d8a223d1c8`.
+- Windows installer and portable ZIP: built by
+  [run 41919720066](https://github.com/prabhatbaskota/docu/actions/runs/41919720066)
+  from commit `aaf91d3`, including the crop feature and branded icon generation.
+  Downloaded artifacts are stored in `release/windows-pdf-page-crop/`.
+  Their SHA-256 values match `SHA256SUMS.txt`. The installer hash is
+  `776c4c521931119b7d78422b761a07170db2aee669ec97b10bb375907d639abe`.
+  The application and installer contain the branded app icon; the portable ZIP
+  also contains the exact dedicated document icon. The installer is unsigned.
+- Both apps passed analysis. All 20 portable tests passed on Windows and Linux;
+  all 39 desktop application tests passed on the Windows build runner.
+
+The Android preview is debug-signed. Physical camera behavior and installation
+on a clean Windows machine were not tested by these automated checks.
