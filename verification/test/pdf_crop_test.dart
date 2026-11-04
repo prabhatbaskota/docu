@@ -4,14 +4,14 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:pdf/pdf.dart' show PdfPageFormat, PdfColors;
 import 'package:pdf/widgets.dart' as pw;
 import 'package:pdfrx/pdfrx.dart';
+import 'pdfium_test_support.dart';
 import '../../mobile/lib/core/pdf_engine.dart' as mobile;
 import '../../desktop/lib/core/pdf_engine.dart' as desktop;
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   setUpAll(() async {
-    Pdfrx.cacheDirectoryPath = Directory.systemTemp.path;
-    await pdfrxFlutterInitialize();
+    await initializeTestPdfium();
   });
   for (final app in ['mobile', 'desktop']) {
     test(
